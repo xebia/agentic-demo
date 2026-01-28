@@ -214,7 +214,7 @@ Messages in DLQ should include:
       {
         "attempt": 1,
         "timestamp": "2026-01-28T22:00:00Z",
-        "error": "NullReferenceException: Missing required field 'category'"
+        "error": "ValidationException: Missing required field 'category'"
       },
       // ... subsequent attempts
     ]
@@ -292,10 +292,14 @@ HALF-OPEN → OPEN:
 
 ```csharp
 // Purchasing Agent calling External Vendor API
+// NOTE: This is a simplified example for illustration purposes.
+// Production implementations should use thread-safe operations and established libraries like Polly.
 public class VendorApiCircuitBreaker
 {
+    private readonly object _lock = new object();
     private CircuitBreakerState _state = CircuitBreakerState.Closed;
     private int _failureCount = 0;
+    private int _successCount = 0;
     private DateTime _lastFailureTime;
     private const int FailureThreshold = 5;
     private const int SuccessThreshold = 3;
@@ -303,16 +307,20 @@ public class VendorApiCircuitBreaker
     
     public async Task<VendorResponse> CallVendorApi(VendorRequest request)
     {
-        if (_state == CircuitBreakerState.Open)
+        lock (_lock)
         {
-            if (DateTime.UtcNow - _lastFailureTime > TimeSpan.FromSeconds(TimeoutSeconds))
+            if (_state == CircuitBreakerState.Open)
             {
-                _state = CircuitBreakerState.HalfOpen;
-                _failureCount = 0;
-            }
-            else
-            {
-                throw new CircuitBreakerOpenException("Vendor API circuit breaker is open");
+                if (DateTime.UtcNow - _lastFailureTime > TimeSpan.FromSeconds(TimeoutSeconds))
+                {
+                    _state = CircuitBreakerState.HalfOpen;
+                    _successCount = 0;
+                    _failureCount = 0;
+                }
+                else
+                {
+                    throw new CircuitBreakerOpenException("Vendor API circuit breaker is open");
+                }
             }
         }
         
@@ -320,13 +328,17 @@ public class VendorApiCircuitBreaker
         {
             var response = await _vendorApi.SubmitOrderAsync(request);
             
-            if (_state == CircuitBreakerState.HalfOpen)
+            lock (_lock)
             {
-                _failureCount++;
-                if (_failureCount >= SuccessThreshold)
+                if (_state == CircuitBreakerState.HalfOpen)
                 {
-                    _state = CircuitBreakerState.Closed;
-                    _failureCount = 0;
+                    _successCount++;
+                    if (_successCount >= SuccessThreshold)
+                    {
+                        _state = CircuitBreakerState.Closed;
+                        _successCount = 0;
+                        _failureCount = 0;
+                    }
                 }
             }
             
@@ -334,12 +346,16 @@ public class VendorApiCircuitBreaker
         }
         catch (Exception ex)
         {
-            _lastFailureTime = DateTime.UtcNow;
-            _failureCount++;
-            
-            if (_failureCount >= FailureThreshold)
+            lock (_lock)
             {
-                _state = CircuitBreakerState.Open;
+                _lastFailureTime = DateTime.UtcNow;
+                _failureCount++;
+                
+                if (_state == CircuitBreakerState.HalfOpen || 
+                    _failureCount >= FailureThreshold)
+                {
+                    _state = CircuitBreakerState.Open;
+                }
             }
             
             throw;
@@ -594,25 +610,30 @@ Prevent upstream systems from overwhelming the queue.
 
 **Token Bucket Algorithm**:
 ```csharp
-public class TokenBucket
+// NOTE: This is a simplified example. Production implementations should use thread-safe operations.
+public class TokenBucket : IDisposable
 {
+    private readonly object _lock = new object();
     private readonly int _capacity = 100;
     private readonly int _refillRate = 10; // tokens per second
     private int _tokens = 100;
     private DateTime _lastRefill = DateTime.UtcNow;
     
-    public async Task<bool> TryConsumeAsync()
+    public Task<bool> TryConsumeAsync()
     {
-        RefillTokens();
-        
-        if (_tokens > 0)
+        lock (_lock)
         {
-            _tokens--;
-            return true;
+            RefillTokens();
+            
+            if (_tokens > 0)
+            {
+                _tokens--;
+                return Task.FromResult(true);
+            }
+            
+            // Backpressure signal: no tokens available
+            return Task.FromResult(false);
         }
-        
-        // Backpressure signal: no tokens available
-        return false;
     }
     
     private void RefillTokens()
@@ -623,6 +644,11 @@ public class TokenBucket
         
         _tokens = Math.Min(_capacity, _tokens + tokensToAdd);
         _lastRefill = now;
+    }
+    
+    public void Dispose()
+    {
+        // Cleanup if needed
     }
 }
 ```
@@ -679,7 +705,7 @@ Impact: Exponential event multiplication
 
 **1. Rate Limiting Event Publication**:
 ```csharp
-public class RateLimitedEventPublisher
+public class RateLimitedEventPublisher : IDisposable
 {
     private readonly SemaphoreSlim _semaphore;
     private readonly int _maxConcurrent = 10;
@@ -707,6 +733,11 @@ public class RateLimitedEventPublisher
             // Rate limit: 10 events per second
             await Task.Delay(TimeSpan.FromSeconds(1));
         }
+    }
+    
+    public void Dispose()
+    {
+        _semaphore?.Dispose();
     }
 }
 ```
@@ -1267,10 +1298,17 @@ CREATE TABLE ProcessedMessages (
     ResultId VARCHAR(100)
 );
 
--- Insert with conflict handling
+-- Insert with conflict handling (PostgreSQL syntax)
 INSERT INTO ProcessedMessages (MessageId, ProcessedAt, ResultId)
 VALUES (@MessageId, @ProcessedAt, @ResultId)
 ON CONFLICT (MessageId) DO NOTHING;
+
+-- For SQL Server, use:
+-- IF NOT EXISTS (SELECT 1 FROM ProcessedMessages WHERE MessageId = @MessageId)
+-- BEGIN
+--     INSERT INTO ProcessedMessages (MessageId, ProcessedAt, ResultId)
+--     VALUES (@MessageId, @ProcessedAt, @ResultId)
+-- END
 ```
 
 ### Message Ordering
