@@ -9,7 +9,10 @@
   <ItemGroup>
     <PackageReference Include="Csla.AspNetCore" Version="10.*" />
     <PackageReference Include="Csla.Blazor" Version="10.*" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.2" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.2" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.12.24" />
   </ItemGroup>
 
   <PropertyGroup>
