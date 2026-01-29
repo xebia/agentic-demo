@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol.AspNetCore;
 using Scalar.AspNetCore;
 using Ticketing.DataAccess;
 using Ticketing.DataAccess.Abstractions;
@@ -13,6 +14,7 @@ using Ticketing.DataAccess.Services;
 using Ticketing.Domain;
 using Ticketing.Domain.Services;
 using Ticketing.Web.Components;
+using Ticketing.Web.Mcp;
 using Ticketing.Web.Middleware;
 using Ticketing.Web.OpenApi;
 using Ticketing.Web.Services.Auth;
@@ -90,6 +92,14 @@ builder.Services.AddCascadingAuthenticationState();
 // Add controllers for REST API
 builder.Services.AddControllers();
 
+// Configure MCP Server for LLM agent access
+// MCP tools allow LLMs to act on behalf of authenticated users
+builder.Services.AddScoped<McpUserContext>();
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithTools<TicketingTools>()
+    .WithTools<FulfillmentTools>();
+
 // Configure OpenAPI documentation
 builder.Services.AddOpenApi("v1", options =>
 {
@@ -130,12 +140,20 @@ app.MapScalarApiReference(options =>
         .WithTitle("Ticketing API")
         .WithTheme(ScalarTheme.BluePlanet)
         .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient)
-        .WithPreferredScheme("Bearer")
-        .WithHttpBearerAuthentication(bearer => bearer.Token = "");
+        .AddPreferredSecuritySchemes("Bearer")
+        .AddHttpAuthentication("Bearer", auth => auth.Token = "");
 });
 
 app.MapStaticAssets();
 app.MapControllers(); // REST API endpoints
+
+// Map MCP endpoint at /mcp path
+// Requires JWT Bearer authentication - LLMs must obtain a token first via /api/auth/token
+app.MapMcp("/mcp")
+    .RequireAuthorization(policy => policy
+        .AddAuthenticationSchemes("Bearer")
+        .RequireAuthenticatedUser());
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

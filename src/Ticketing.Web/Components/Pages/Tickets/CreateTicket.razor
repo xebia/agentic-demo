@@ -155,7 +155,7 @@ else
         _vm.ModelPropertyChanged += async (s, e) => await InvokeAsync(StateHasChanged);
 
         var currentUser = _authProvider.CurrentUser;
-        await _vm.RefreshAsync(() => _ticketEditPortal.CreateAsync(currentUser.Email, currentUser.DisplayName));
+        await _vm.RefreshAsync(async () => await _ticketEditPortal.CreateAsync(currentUser.Email, currentUser.DisplayName));
     }
 
     private async Task SaveAsync()
