@@ -1,0 +1,181 @@
+@page "/tickets/new"
+@rendermode InteractiveServer
+@using Csla.Blazor
+@using Ticketing.Web.Services.Auth
+
+<PageTitle>Create Ticket</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>Create New Ticket</h1>
+        <p class="text-muted mb-0">Submit a new support request</p>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(_vm.ViewModelErrorText))
+{
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> @_vm.ViewModelErrorText
+    </div>
+}
+
+@if (_vm.Model == null)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-body">
+                    <EditForm Model="@_vm.Model" OnValidSubmit="SaveAsync">
+                        <CslaValidator />
+
+                        <div class="mb-3">
+                            <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
+                            <InputText id="title" @bind-Value="_vm.Model.Title" class="form-control" placeholder="Brief summary of your request" />
+                            <CslaValidationMessages For="() => _vm.Model.Title" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <InputTextArea id="description" @bind-Value="_vm.Model.Description" class="form-control" rows="5" placeholder="Provide details about your request..." />
+                            <CslaValidationMessages For="() => _vm.Model.Description" />
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="ticketType" class="form-label">Ticket Type <span class="text-danger">*</span></label>
+                                <InputSelect id="ticketType" @bind-Value="_vm.Model.TicketTypeValue" class="form-select">
+                                    @foreach (var type in Enum.GetValues<TicketType>())
+                                    {
+                                        <option value="@type">@type</option>
+                                    }
+                                </InputSelect>
+                                <CslaValidationMessages For="() => _vm.Model.TicketTypeValue" />
+                                <small class="form-text text-muted">
+                                    @GetTicketTypeDescription(_vm.Model.TicketTypeValue)
+                                </small>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label for="priority" class="form-label">Requested Priority</label>
+                                <InputSelect id="priority" @bind-Value="_vm.Model.Priority" class="form-select">
+                                    @foreach (var priority in Enum.GetValues<TicketPriority>())
+                                    {
+                                        <option value="@priority">@priority</option>
+                                    }
+                                </InputSelect>
+                                <CslaValidationMessages For="() => _vm.Model.Priority" />
+                                <small class="form-text text-muted">
+                                    The triage agent may adjust priority based on assessment.
+                                </small>
+                            </div>
+                        </div>
+
+                        <hr class="my-4" />
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary" disabled="@(!_vm.Model.IsSavable || _vm.IsBusy)">
+                                @if (_vm.IsBusy)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                    <span>Creating...</span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-plus-circle me-1"></i>
+                                    <span>Create Ticket</span>
+                                }
+                            </button>
+                            <a href="tickets/all" class="btn btn-secondary">
+                                <i class="bi bi-x-circle me-1"></i> Cancel
+                            </a>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>Submission Info</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Submitted By</span>
+                        <span>@_authProvider.CurrentUser.DisplayName</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Status</span>
+                        <span class="badge bg-secondary">New</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Tips</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="mb-0 ps-3">
+                        <li class="mb-2">Be specific in your title for faster routing</li>
+                        <li class="mb-2">Include relevant details in the description</li>
+                        <li class="mb-2">Select the appropriate ticket type to ensure proper handling</li>
+                        <li>Your ticket will be triaged and assigned to the appropriate queue</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Inject]
+    private IDataPortal<TicketEdit> _ticketEditPortal { get; set; } = null!;
+
+    [Inject]
+    private ViewModel<TicketEdit> _vm { get; set; } = null!;
+
+    [Inject]
+    private NavigationManager _navigation { get; set; } = null!;
+
+    [Inject]
+    private MockAuthenticationStateProvider _authProvider { get; set; } = null!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _vm.Saved += OnSaved;
+        _vm.ModelPropertyChanged += async (s, e) => await InvokeAsync(StateHasChanged);
+
+        var currentUser = _authProvider.CurrentUser;
+        await _vm.RefreshAsync(() => _ticketEditPortal.CreateAsync(currentUser.Email, currentUser.DisplayName));
+    }
+
+    private async Task SaveAsync()
+    {
+        await _vm.SaveAsync();
+    }
+
+    private void OnSaved()
+    {
+        if (_vm.Model != null)
+        {
+            _navigation.NavigateTo($"tickets/{_vm.Model.TicketId}");
+        }
+    }
+
+    private static string GetTicketTypeDescription(TicketType type) => type switch
+    {
+        TicketType.Support => "General support request or issue",
+        TicketType.Purchase => "Request to purchase equipment or software",
+        TicketType.Delivery => "Request for delivery or fulfillment",
+        _ => ""
+    };
+}

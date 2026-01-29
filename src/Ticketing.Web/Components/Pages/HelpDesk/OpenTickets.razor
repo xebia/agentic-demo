@@ -1,0 +1,141 @@
+@page "/helpdesk/open"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = UserRoles.HelpDesk)]
+
+<PageTitle>Open Tickets - Help Desk</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Open Help Desk Tickets</h1>
+    <button class="btn btn-outline-secondary" @onclick="RefreshTickets" disabled="@_isLoading">
+        <i class="bi bi-arrow-clockwise @(_isLoading ? "spin" : "")"></i> Refresh
+    </button>
+</div>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else if (_tickets == null || _tickets.Count == 0)
+{
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i> No open tickets! Great job!
+    </div>
+}
+else
+{
+    <div class="mb-3 text-muted">
+        Showing @_tickets.Count of @_tickets.TotalCount tickets
+    </div>
+
+    @foreach (var ticket in _tickets)
+    {
+        <TicketCard Ticket="ticket" OnClose="ShowCloseModal" />
+    }
+
+    @if (_tickets.HasMore)
+    {
+        <div class="text-center mt-3">
+            <button class="btn btn-outline-primary" @onclick="LoadMore">Load More</button>
+        </div>
+    }
+}
+
+<ConfirmModal @ref="_closeModal"
+              Title="Close Ticket"
+              Message="@($"Close ticket {_selectedTicket?.TicketId}?")"
+              ShowTextInput="true"
+              InputLabel="Resolution Notes"
+              InputPlaceholder="Enter how the ticket was resolved..."
+              RequireInput="true"
+              ConfirmButtonText="Close Ticket"
+              ConfirmButtonClass="btn-success"
+              OnConfirm="CloseTicket" />
+
+@code {
+    [Inject]
+    private IDataPortal<TicketList> _ticketListPortal { get; set; } = null!;
+
+    [Inject]
+    private IDataPortal<TicketEdit> _ticketEditPortal { get; set; } = null!;
+
+    [Inject]
+    private MockAuthenticationStateProvider _authProvider { get; set; } = null!;
+
+    private TicketList? _tickets;
+    private bool _isLoading = true;
+    private ConfirmModal? _closeModal;
+    private TicketInfo? _selectedTicket;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshTickets();
+    }
+
+    private async Task RefreshTickets()
+    {
+        _isLoading = true;
+        try
+        {
+            var criteria = TicketListCriteria.OpenHelpDeskTickets();
+            _tickets = await _ticketListPortal.FetchAsync(criteria);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading tickets: {ex.Message}");
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        if (_tickets != null)
+        {
+            var criteria = TicketListCriteria.OpenHelpDeskTickets();
+            criteria.Offset = _tickets.Count;
+            var moreTickets = await _ticketListPortal.FetchAsync(criteria);
+            // In a real app, we'd merge the lists
+        }
+    }
+
+    private void ShowCloseModal(TicketInfo ticket)
+    {
+        _selectedTicket = ticket;
+        _closeModal?.Show();
+    }
+
+    private async Task CloseTicket(string? resolutionNotes)
+    {
+        if (_selectedTicket == null || string.IsNullOrEmpty(resolutionNotes))
+            return;
+
+        try
+        {
+            var ticket = await _ticketEditPortal.FetchAsync(_selectedTicket.TicketId);
+            ticket.Close(resolutionNotes);
+            await _ticketEditPortal.UpdateAsync(ticket);
+            await RefreshTickets();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error closing ticket: {ex.Message}");
+        }
+    }
+}
+
+<style>
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+</style>

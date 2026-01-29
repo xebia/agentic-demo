@@ -1,0 +1,101 @@
+@rendermode InteractiveServer
+
+@if (IsVisible)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@Title</h5>
+                    <button type="button" class="btn-close" @onclick="Cancel" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(Message))
+                    {
+                        <p>@Message</p>
+                    }
+                    @if (ShowTextInput)
+                    {
+                        <div class="mb-3">
+                            <label for="modalInput" class="form-label">@InputLabel</label>
+                            <textarea class="form-control" id="modalInput" rows="3" @bind="InputValue" 
+                                      placeholder="@InputPlaceholder"></textarea>
+                        </div>
+                    }
+                    @ChildContent
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="Cancel">Cancel</button>
+                    <button type="button" class="btn @ConfirmButtonClass" @onclick="Confirm" 
+                            disabled="@(ShowTextInput && RequireInput && string.IsNullOrWhiteSpace(InputValue))">
+                        @ConfirmButtonText
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string Title { get; set; } = "Confirm";
+
+    [Parameter]
+    public string? Message { get; set; }
+
+    [Parameter]
+    public bool ShowTextInput { get; set; }
+
+    [Parameter]
+    public string InputLabel { get; set; } = "Notes";
+
+    [Parameter]
+    public string InputPlaceholder { get; set; } = "Enter notes...";
+
+    [Parameter]
+    public bool RequireInput { get; set; }
+
+    [Parameter]
+    public string ConfirmButtonText { get; set; } = "Confirm";
+
+    [Parameter]
+    public string ConfirmButtonClass { get; set; } = "btn-primary";
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> OnConfirm { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    public bool IsVisible { get; private set; }
+    private string? InputValue { get; set; }
+
+    public void Show(string? defaultInput = null)
+    {
+        InputValue = defaultInput;
+        IsVisible = true;
+        StateHasChanged();
+    }
+
+    public void Hide()
+    {
+        IsVisible = false;
+        InputValue = null;
+        StateHasChanged();
+    }
+
+    private async Task Confirm()
+    {
+        await OnConfirm.InvokeAsync(InputValue);
+        Hide();
+    }
+
+    private async Task Cancel()
+    {
+        await OnCancel.InvokeAsync();
+        Hide();
+    }
+}

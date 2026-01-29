@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ticketing.DataAccess.Abstractions\Ticketing.DataAccess.Abstractions.csproj" />
+    <ProjectReference Include="..\Ticketing.Domain\Ticketing.Domain.csproj" />
+    <ProjectReference Include="..\Ticketing.DataAccess\Ticketing.DataAccess.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Csla.AspNetCore" Version="10.*" />
+    <PackageReference Include="Csla.Blazor" Version="10.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.2" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+</Project>

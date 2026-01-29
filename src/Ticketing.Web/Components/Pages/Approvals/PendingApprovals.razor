@@ -1,0 +1,188 @@
+@page "/approvals/pending"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = UserRoles.Approver)]
+
+<PageTitle>Pending Approvals</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Pending Approvals</h1>
+    <button class="btn btn-outline-secondary" @onclick="RefreshTickets" disabled="@_isLoading">
+        <i class="bi bi-arrow-clockwise @(_isLoading ? "spin" : "")"></i> Refresh
+    </button>
+</div>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else if (_tickets == null || _tickets.Count == 0)
+{
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i> No pending approvals! All caught up!
+    </div>
+}
+else
+{
+    <div class="mb-3 text-muted">
+        @_tickets.Count approval(s) pending
+    </div>
+
+    @foreach (var ticket in _tickets)
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h5 class="card-title">
+                            <a href="@($"tickets/{ticket.TicketId}")" class="text-decoration-none">
+                                @ticket.TicketId - @ticket.Title
+                            </a>
+                        </h5>
+                        <p class="card-text text-muted">
+                            <i class="bi bi-person"></i> Requested by: @ticket.RequestorDisplayName<br />
+                            @if (ticket.Category.HasValue)
+                            {
+                                <i class="bi bi-tag"></i> <span>Category: @ticket.Category</span><br />
+                            }
+                            <i class="bi bi-clock"></i> Submitted: @ticket.TimeSinceCreation
+                        </p>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="d-flex flex-column gap-2">
+                            <button class="btn btn-success" @onclick="() => ShowApproveConfirm(ticket)">
+                                <i class="bi bi-check-lg"></i> Approve
+                            </button>
+                            <button class="btn btn-danger" @onclick="() => ShowRejectModal(ticket)">
+                                <i class="bi bi-x-lg"></i> Reject
+                            </button>
+                            <a href="@($"tickets/{ticket.TicketId}")" class="btn btn-outline-secondary">
+                                <i class="bi bi-eye"></i> View Details
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+<ConfirmModal @ref="_approveModal"
+              Title="Approve Request"
+              Message="@($"Approve purchase request {_selectedTicket?.TicketId}?")"
+              ConfirmButtonText="Approve"
+              ConfirmButtonClass="btn-success"
+              OnConfirm="ApproveTicket" />
+
+<ConfirmModal @ref="_rejectModal"
+              Title="Reject Request"
+              Message="@($"Reject purchase request {_selectedTicket?.TicketId}?")"
+              ShowTextInput="true"
+              InputLabel="Rejection Reason"
+              InputPlaceholder="Enter the reason for rejecting this request..."
+              RequireInput="true"
+              ConfirmButtonText="Reject"
+              ConfirmButtonClass="btn-danger"
+              OnConfirm="RejectTicket" />
+
+@code {
+    [Inject]
+    private IDataPortal<TicketList> _ticketListPortal { get; set; } = null!;
+
+    [Inject]
+    private IDataPortal<TicketEdit> _ticketEditPortal { get; set; } = null!;
+
+    [Inject]
+    private MockAuthenticationStateProvider _authProvider { get; set; } = null!;
+
+    private TicketList? _tickets;
+    private bool _isLoading = true;
+    private ConfirmModal? _approveModal;
+    private ConfirmModal? _rejectModal;
+    private TicketInfo? _selectedTicket;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshTickets();
+    }
+
+    private async Task RefreshTickets()
+    {
+        _isLoading = true;
+        try
+        {
+            var criteria = TicketListCriteria.PendingApproval();
+            _tickets = await _ticketListPortal.FetchAsync(criteria);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading tickets: {ex.Message}");
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ShowApproveConfirm(TicketInfo ticket)
+    {
+        _selectedTicket = ticket;
+        _approveModal?.Show();
+    }
+
+    private void ShowRejectModal(TicketInfo ticket)
+    {
+        _selectedTicket = ticket;
+        _rejectModal?.Show();
+    }
+
+    private async Task ApproveTicket(string? _)
+    {
+        if (_selectedTicket == null)
+            return;
+
+        try
+        {
+            var ticket = await _ticketEditPortal.FetchAsync(_selectedTicket.TicketId);
+            ticket.Approve();
+            await _ticketEditPortal.UpdateAsync(ticket);
+            await RefreshTickets();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error approving ticket: {ex.Message}");
+        }
+    }
+
+    private async Task RejectTicket(string? reason)
+    {
+        if (_selectedTicket == null || string.IsNullOrEmpty(reason))
+            return;
+
+        try
+        {
+            var ticket = await _ticketEditPortal.FetchAsync(_selectedTicket.TicketId);
+            ticket.Reject(reason);
+            await _ticketEditPortal.UpdateAsync(ticket);
+            await RefreshTickets();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error rejecting ticket: {ex.Message}");
+        }
+    }
+}
+
+<style>
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+</style>

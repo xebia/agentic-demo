@@ -1,0 +1,107 @@
+@page "/tickets/all"
+@using Ticketing.Web.Services.Auth
+
+<PageTitle>@(_isEmployeeView ? "My Tickets" : "All Open Tickets")</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>@(_isEmployeeView ? "My Tickets" : "All Open Tickets")</h1>
+        <p class="text-muted mb-0">@(_isEmployeeView ? "Tickets you have submitted" : "Read-only view of all tickets across all queues")</p>
+    </div>
+    <div>
+        <a href="tickets/new" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i> Create Ticket
+        </a>
+    </div>
+</div>
+
+@if (_tickets == null)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else if (_tickets.Count == 0)
+{
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i> @(_isEmployeeView ? "You have no open tickets!" : "No open tickets in the system!")
+    </div>
+}
+else
+{
+    <div class="mb-3 text-muted">
+        Showing @_tickets.Count of @_tickets.TotalCount @(_isEmployeeView ? "tickets" : "open tickets")
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Ticket</th>
+                    <th>Title</th>
+                    <th>Type</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Queue</th>
+                    <th>Requestor</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var ticket in _tickets)
+                {
+                    <tr>
+                        <td>
+                            <a href="@($"tickets/{ticket.TicketId}")">@ticket.TicketId</a>
+                            @if (ticket.ParentTicketId != null)
+                            {
+                                <br /><small class="text-muted">↳ @ticket.ParentTicketId</small>
+                            }
+                        </td>
+                        <td>@ticket.Title</td>
+                        <td>@ticket.TicketTypeValue</td>
+                        <td><span class="@ticket.PriorityCssClass">@ticket.Priority</span></td>
+                        <td><span class="badge bg-secondary">@ticket.Status.GetDisplayName()</span></td>
+                        <td>@(ticket.AssignedQueue?.GetDisplayName() ?? "-")</td>
+                        <td>@ticket.RequestorDisplayName</td>
+                        <td>@ticket.TimeSinceCreation</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Inject]
+    private IDataPortal<TicketList> _ticketListPortal { get; set; } = null!;
+
+    [Inject]
+    private MockAuthenticationStateProvider _authProvider { get; set; } = null!;
+
+    private TicketList? _tickets;
+    private bool _isEmployeeView;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var currentUser = _authProvider.CurrentUser;
+        
+        // Check if user is an employee (has User role but not HelpDesk or Approver)
+        _isEmployeeView = currentUser.IsInRole(UserRoles.User) 
+            && !currentUser.IsInRole(UserRoles.HelpDesk) 
+            && !currentUser.IsInRole(UserRoles.Approver);
+
+        var criteria = TicketListCriteria.AllOpenTickets();
+        criteria.Limit = 100;
+        
+        // Filter to only show employee's own tickets (use email as that's what's stored in CreatedBy)
+        if (_isEmployeeView)
+        {
+            criteria.CreatedBy = currentUser.Email;
+        }
+        
+        _tickets = await _ticketListPortal.FetchAsync(criteria);
+    }
+}

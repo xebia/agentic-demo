@@ -1,0 +1,59 @@
+﻿@page "/"
+
+<PageTitle>Dashboard - Ticketing System</PageTitle>
+
+<div class="container-fluid">
+    <h1 class="mb-4">Dashboard</h1>
+    
+    <div class="row">
+        <AuthorizeView Roles="@UserRoles.HelpDesk">
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-inbox text-primary"></i> Help Desk
+                        </h5>
+                        <p class="card-text">Manage support tickets assigned to the help desk queue.</p>
+                        <a href="helpdesk/open" class="btn btn-primary">View Open Tickets</a>
+                    </div>
+                </div>
+            </div>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="@UserRoles.Approver">
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-hourglass-split text-warning"></i> Approvals
+                        </h5>
+                        <p class="card-text">Review and approve or reject purchase requests.</p>
+                        <a href="approvals/pending" class="btn btn-warning">View Pending Approvals</a>
+                    </div>
+                </div>
+            </div>
+        </AuthorizeView>
+
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="bi bi-list-ul text-info"></i> All Tickets
+                    </h5>
+                    <p class="card-text">View all open tickets across all queues (read-only).</p>
+                    <a href="tickets/all" class="btn btn-info">View All Tickets</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <AuthorizeView>
+        <Authorized>
+            <div class="alert alert-info mt-4">
+                <i class="bi bi-info-circle"></i>
+                Logged in as <strong>@context.User.Identity?.Name</strong>
+                with roles: @string.Join(", ", context.User.Claims.Where(c => c.Type == System.Security.Claims.ClaimTypes.Role).Select(c => c.Value))
+            </div>
+        </Authorized>
+    </AuthorizeView>
+</div>

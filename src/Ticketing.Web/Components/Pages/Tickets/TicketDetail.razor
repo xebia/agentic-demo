@@ -1,0 +1,353 @@
+@page "/tickets/{TicketId}"
+@rendermode InteractiveServer
+
+<PageTitle>@(Ticket?.Title ?? "Ticket Details")</PageTitle>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else if (Ticket == null)
+{
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> Ticket not found.
+    </div>
+    <a href="/" class="btn btn-secondary">Back to Dashboard</a>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h1>@Ticket.TicketId</h1>
+            <h2 class="text-muted">@Ticket.Title</h2>
+        </div>
+        <div class="d-flex gap-2">
+            <span class="@GetPriorityCssClass()">@Ticket.Priority</span>
+            <span class="badge bg-secondary fs-6">@Ticket.Status.GetDisplayName()</span>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Description</h5>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(Ticket.Description))
+                    {
+                        <p class="card-text">@Ticket.Description</p>
+                    }
+                    else
+                    {
+                        <p class="card-text text-muted">No description provided.</p>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(Ticket.TriageNotes))
+            {
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Triage Notes</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">@Ticket.TriageNotes</p>
+                        @if (!string.IsNullOrEmpty(Ticket.TriageDecision))
+                        {
+                            <small class="text-muted">Decision: @Ticket.TriageDecision</small>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(Ticket.ResolutionNotes))
+            {
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Resolution</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">@Ticket.ResolutionNotes</p>
+                    </div>
+                </div>
+            }
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">History</h5>
+                </div>
+                <div class="card-body">
+                    @if (_history == null || !_history.Any())
+                    {
+                        <p class="text-muted">No history available.</p>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var entry in _history)
+                            {
+                                <li class="list-group-item">
+                                    <div class="d-flex justify-content-between">
+                                        <div>
+                                            <strong>@entry.FieldName</strong>
+                                            @if (entry.OldValue != null && entry.NewValue != null)
+                                            {
+                                                <span class="text-muted">
+                                                    changed from <em>@entry.OldValue</em> to <em>@entry.NewValue</em>
+                                                </span>
+                                            }
+                                            else if (entry.NewValue != null)
+                                            {
+                                                <span class="text-muted">
+                                                    set to <em>@entry.NewValue</em>
+                                                </span>
+                                            }
+                                        </div>
+                                        <small class="text-muted">
+                                            @entry.ChangedAt.ToString("g") by @entry.ChangedBy
+                                        </small>
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Details</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Type</span>
+                        <span>@Ticket.TicketTypeValue</span>
+                    </li>
+                    @if (Ticket.Category.HasValue)
+                    {
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span class="text-muted">Category</span>
+                            <span>@Ticket.Category</span>
+                        </li>
+                    }
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Priority</span>
+                        <span>@Ticket.Priority</span>
+                    </li>
+                    @if (Ticket.AssignedQueue.HasValue)
+                    {
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span class="text-muted">Queue</span>
+                            <span>@Ticket.AssignedQueue.Value.GetDisplayName()</span>
+                        </li>
+                    }
+                    @if (!string.IsNullOrEmpty(Ticket.AssignedTo))
+                    {
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span class="text-muted">Assigned To</span>
+                            <span>@Ticket.AssignedTo</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Requestor</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Name</span>
+                        <span>@(Ticket.CreatedByName ?? Ticket.CreatedBy)</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Email</span>
+                        <span>@Ticket.CreatedBy</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Timestamps</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Created</span>
+                        <span>@Ticket.CreatedAt.ToString("g")</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span class="text-muted">Updated</span>
+                        <span>@Ticket.UpdatedAt.ToString("g")</span>
+                    </li>
+                    @if (Ticket.ClosedAt.HasValue)
+                    {
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span class="text-muted">Closed</span>
+                            <span>@Ticket.ClosedAt.Value.ToString("g")</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+
+            @if (Ticket.ParentTicketId != null)
+            {
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Related Tickets</h5>
+                    </div>
+                    <div class="card-body">
+                        <a href="/tickets/@Ticket.ParentTicketId" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-link-45deg"></i> Parent: @Ticket.ParentTicketId
+                        </a>
+                    </div>
+                </div>
+            }
+
+            <div class="d-grid gap-2">
+                @if (Ticket.Status != TicketStatus.Closed && Ticket.Status != TicketStatus.Resolved)
+                {
+                    <AuthorizeView Roles="@UserRoles.HelpDesk">
+                        @if (Ticket.AssignedQueue == TicketQueue.Helpdesk)
+                        {
+                            <button class="btn btn-success" @onclick="ShowCloseModal">
+                                <i class="bi bi-check-lg"></i> Close Ticket
+                            </button>
+                        }
+                    </AuthorizeView>
+
+                    <AuthorizeView Roles="@UserRoles.Approver">
+                        @if (Ticket.Status == TicketStatus.PendingApproval)
+                        {
+                            <button class="btn btn-success" @onclick="ApproveTicket">
+                                <i class="bi bi-check-lg"></i> Approve
+                            </button>
+                            <button class="btn btn-danger" @onclick="ShowRejectModal">
+                                <i class="bi bi-x-lg"></i> Reject
+                            </button>
+                        }
+                    </AuthorizeView>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<ConfirmModal @ref="_closeModal"
+              Title="Close Ticket"
+              ShowTextInput="true"
+              InputLabel="Resolution Notes"
+              InputPlaceholder="Enter how the ticket was resolved..."
+              RequireInput="true"
+              ConfirmButtonText="Close Ticket"
+              ConfirmButtonClass="btn-success"
+              OnConfirm="CloseTicket" />
+
+<ConfirmModal @ref="_rejectModal"
+              Title="Reject Request"
+              ShowTextInput="true"
+              InputLabel="Rejection Reason"
+              InputPlaceholder="Enter reason for rejection..."
+              RequireInput="true"
+              ConfirmButtonText="Reject"
+              ConfirmButtonClass="btn-danger"
+              OnConfirm="RejectTicket" />
+
+@code {
+    [Parameter]
+    public string TicketId { get; set; } = string.Empty;
+
+    [Inject]
+    private IDataPortal<TicketEdit> _ticketPortal { get; set; } = null!;
+
+    [Inject]
+    private ITicketHistoryDal _historyDal { get; set; } = null!;
+
+    [Inject]
+    private MockAuthenticationStateProvider _authProvider { get; set; } = null!;
+
+    [Inject]
+    private NavigationManager _navigation { get; set; } = null!;
+
+    private TicketEdit? Ticket { get; set; }
+    private IEnumerable<TicketHistoryDto>? _history;
+    private bool _isLoading = true;
+    private ConfirmModal? _closeModal;
+    private ConfirmModal? _rejectModal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTicket();
+    }
+
+    private async Task LoadTicket()
+    {
+        _isLoading = true;
+        try
+        {
+            Ticket = await _ticketPortal.FetchAsync(TicketId);
+            _history = _historyDal.FetchByTicketId(TicketId);
+        }
+        catch (DataNotFoundException)
+        {
+            Ticket = null;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading ticket: {ex.Message}");
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private string GetPriorityCssClass() => Ticket?.Priority switch
+    {
+        TicketPriority.Critical => "badge bg-danger fs-6",
+        TicketPriority.High => "badge bg-warning text-dark fs-6",
+        TicketPriority.Medium => "badge bg-info text-dark fs-6",
+        TicketPriority.Low => "badge bg-success fs-6",
+        _ => "badge bg-secondary fs-6"
+    };
+
+    private void ShowCloseModal() => _closeModal?.Show();
+    private void ShowRejectModal() => _rejectModal?.Show();
+
+    private async Task CloseTicket(string? resolutionNotes)
+    {
+        if (Ticket == null || string.IsNullOrEmpty(resolutionNotes))
+            return;
+
+        Ticket.Close(resolutionNotes);
+        await _ticketPortal.UpdateAsync(Ticket);
+        await LoadTicket();
+    }
+
+    private async Task ApproveTicket()
+    {
+        if (Ticket == null)
+            return;
+
+        Ticket.Approve();
+        await _ticketPortal.UpdateAsync(Ticket);
+        await LoadTicket();
+    }
+
+    private async Task RejectTicket(string? reason)
+    {
+        if (Ticket == null || string.IsNullOrEmpty(reason))
+            return;
+
+        Ticket.Reject(reason);
+        await _ticketPortal.UpdateAsync(Ticket);
+        await LoadTicket();
+    }
+}

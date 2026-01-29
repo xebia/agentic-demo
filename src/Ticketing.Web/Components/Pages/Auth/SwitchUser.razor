@@ -1,0 +1,56 @@
+@page "/auth/switch-user/{UserId}"
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authentication
+@using Ticketing.Web.Services.Auth
+@inject NavigationManager Navigation
+@inject IHttpContextAccessor HttpContextAccessor
+
+@* This is intentionally an SSR-only page (no @rendermode) to access HttpContext *@
+
+@code {
+    [Parameter]
+    public string UserId { get; set; } = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var httpContext = HttpContextAccessor.HttpContext;
+        if (httpContext == null)
+        {
+            // Should never happen for SSR pages
+            Navigation.NavigateTo("/");
+            return;
+        }
+
+        // Find the requested user
+        var user = MockUser.DemoUsers.All.FirstOrDefault(u => u.Id == UserId);
+        if (user == null)
+        {
+            // Invalid user ID, redirect to home
+            Navigation.NavigateTo("/");
+            return;
+        }
+
+        // Create claims for the user
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id),
+            new(ClaimTypes.Email, user.Email),
+            new(ClaimTypes.Name, user.DisplayName)
+        };
+        
+        // Add role claims
+        foreach (var role in user.Roles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+
+        var identity = new ClaimsIdentity(claims, "MockAuth");
+        var principal = new ClaimsPrincipal(identity);
+
+        // Sign in using HttpContext cookie authentication
+        await httpContext.SignInAsync("MockAuth", principal);
+
+        // Redirect to home page
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+}
