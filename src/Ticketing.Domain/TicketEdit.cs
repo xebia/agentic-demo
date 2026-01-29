@@ -79,6 +79,7 @@ public partial class TicketEdit : BusinessBase<TicketEdit>
         LoadProperty(StatusProperty, TicketStatus.New);
         LoadProperty(PriorityProperty, TicketPriority.Medium);
         LoadProperty(TicketTypeValueProperty, TicketType.Support);
+        LoadProperty(ParentTicketIdProperty, (string?)null);
         BusinessRules.CheckRules();
     }
 
