@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ticketing.DataAccess.Abstractions\Ticketing.DataAccess.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Csla" Version="10.*" />
+    <PackageReference Include="Csla.Generator.AutoImplementProperties.CSharp" Version="10.*" />
+    <PackageReference Include="Csla.Generator.AutoSerialization.CSharp" Version="10.*" />
+  </ItemGroup>
+
+</Project>

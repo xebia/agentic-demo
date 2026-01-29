@@ -1,0 +1,54 @@
+﻿<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">🎫 Ticketing</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Dashboard
+            </NavLink>
+        </div>
+
+        <AuthorizeView Roles="@UserRoles.HelpDesk">
+            <div class="nav-item px-3 mt-3">
+                <span class="nav-link text-muted small">HELP DESK</span>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="helpdesk/open">
+                    <span class="bi bi-inbox-fill-nav-menu" aria-hidden="true"></span> Open Tickets
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="helpdesk/closed">
+                    <span class="bi bi-check-circle-nav-menu" aria-hidden="true"></span> Closed Tickets
+                </NavLink>
+            </div>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="@UserRoles.Approver">
+            <div class="nav-item px-3 mt-3">
+                <span class="nav-link text-muted small">APPROVALS</span>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="approvals/pending">
+                    <span class="bi bi-hourglass-split-nav-menu" aria-hidden="true"></span> Pending Approvals
+                </NavLink>
+            </div>
+        </AuthorizeView>
+
+        <div class="nav-item px-3 mt-3">
+            <span class="nav-link text-muted small">ALL TICKETS</span>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="tickets/all">
+                <span class="bi bi-list-ul-nav-menu" aria-hidden="true"></span> All Open Tickets
+            </NavLink>
+        </div>
+    </nav>
+</div>
+
