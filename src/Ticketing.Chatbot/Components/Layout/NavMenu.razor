@@ -1,0 +1,32 @@
+@using Ticketing.Chatbot.Services
+@inject UserSessionService UserSession
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">Ticketing Chatbot</a>
+    </div>
+</div>
+
+<div class="nav-scrollable">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-chat-fill-nav-menu" aria-hidden="true"></span> Chat
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="tools">
+                <span class="bi bi-tools-nav-menu" aria-hidden="true"></span> MCP Tools
+            </NavLink>
+        </div>
+    </nav>
+</div>
+
+@if (UserSession.IsAuthenticated)
+{
+    <div class="user-info px-3 py-2">
+        <small class="text-muted">Logged in as:</small>
+        <div class="fw-bold">@UserSession.CurrentUser?.DisplayName</div>
+    </div>
+}

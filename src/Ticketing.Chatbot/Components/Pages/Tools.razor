@@ -1,0 +1,199 @@
+@page "/tools"
+@using Ticketing.Chatbot.Models
+@using Ticketing.Chatbot.Services
+@using System.Text.Json
+@inject UserSessionService UserSession
+@inject McpClientService McpClient
+@rendermode InteractiveServer
+
+<PageTitle>MCP Tools</PageTitle>
+
+<h3>MCP Tools Explorer</h3>
+
+@if (!UserSession.IsAuthenticated)
+{
+    <div class="alert alert-warning">
+        Please <a href="/">log in</a> first to use MCP tools.
+    </div>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header">Available Tools</div>
+                <div class="card-body">
+                    <button class="btn btn-primary" @onclick="LoadTools" disabled="@isLoading">
+                        @(isLoading ? "Loading..." : "Refresh Tools")
+                    </button>
+
+                    @if (tools.Count > 0)
+                    {
+                        <div class="list-group mt-3">
+                            @foreach (var tool in tools)
+                            {
+                                <button class="list-group-item list-group-item-action @(selectedTool == tool.Name ? "active" : "")"
+                                        @onclick="() => SelectTool(tool)">
+                                    <strong>@tool.Name</strong>
+                                    <br />
+                                    <small>@tool.Description</small>
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header">Tool Call</div>
+                <div class="card-body">
+                    @if (selectedTool != null)
+                    {
+                        <h5>@selectedTool</h5>
+                        <div class="mb-3">
+                            <label class="form-label">Arguments (JSON)</label>
+                            <textarea class="form-control font-monospace" rows="5" @bind="toolArguments"></textarea>
+                        </div>
+                        <button class="btn btn-success" @onclick="CallTool" disabled="@isLoading">
+                            @(isLoading ? "Calling..." : "Call Tool")
+                        </button>
+                    }
+                    else
+                    {
+                        <p class="text-muted">Select a tool from the list to call it.</p>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(lastResult))
+            {
+                <div class="card">
+                    <div class="card-header">Result</div>
+                    <div class="card-body">
+                        <pre class="mb-0" style="max-height: 400px; overflow-y: auto;">@lastResult</pre>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger mt-3">@errorMessage</div>
+    }
+}
+
+@code {
+    private List<ToolInfo> tools = new();
+    private string? selectedTool;
+    private string toolArguments = "{}";
+    private string? lastResult;
+    private string? errorMessage;
+    private bool isLoading = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (UserSession.IsAuthenticated)
+        {
+            await LoadTools();
+        }
+    }
+
+    private async Task LoadTools()
+    {
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await McpClient.ListToolsAsync();
+            if (result != null)
+            {
+                tools.Clear();
+
+                // Parse the tools from the response
+                if (result.RootElement.TryGetProperty("result", out var resultProp) &&
+                    resultProp.TryGetProperty("tools", out var toolsArray))
+                {
+                    foreach (var tool in toolsArray.EnumerateArray())
+                    {
+                        tools.Add(new ToolInfo
+                        {
+                            Name = tool.GetProperty("name").GetString() ?? "",
+                            Description = tool.TryGetProperty("description", out var desc)
+                                ? desc.GetString() ?? ""
+                                : ""
+                        });
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load tools: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void SelectTool(ToolInfo tool)
+    {
+        selectedTool = tool.Name;
+        toolArguments = "{}";
+        lastResult = null;
+    }
+
+    private async Task CallTool()
+    {
+        if (string.IsNullOrEmpty(selectedTool)) return;
+
+        isLoading = true;
+        errorMessage = null;
+        lastResult = null;
+        StateHasChanged();
+
+        try
+        {
+            Dictionary<string, object>? args = null;
+            if (!string.IsNullOrWhiteSpace(toolArguments) && toolArguments != "{}")
+            {
+                args = JsonSerializer.Deserialize<Dictionary<string, object>>(toolArguments);
+            }
+
+            var result = await McpClient.CallToolAsync(selectedTool, args);
+            if (result != null)
+            {
+                lastResult = JsonSerializer.Serialize(
+                    result.RootElement,
+                    new JsonSerializerOptions { WriteIndented = true });
+            }
+            else
+            {
+                errorMessage = "Tool call returned no result.";
+            }
+        }
+        catch (JsonException)
+        {
+            errorMessage = "Invalid JSON in arguments.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Tool call failed: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private class ToolInfo
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+    }
+}

@@ -4,6 +4,8 @@
 @using Ticketing.Web.Services.Auth
 @inject NavigationManager Navigation
 @inject IHttpContextAccessor HttpContextAccessor
+@inject AuthServiceClient AuthService
+@inject ILogger<SwitchUser> Logger
 
 @* This is intentionally an SSR-only page (no @rendermode) to access HttpContext *@
 
@@ -21,25 +23,35 @@
             return;
         }
 
-        // Find the requested user
-        var user = MockUser.DemoUsers.All.FirstOrDefault(u => u.Id == UserId);
-        if (user == null)
+        // Authenticate the user via the auth service
+        // This demonstrates where real credential validation would occur
+        Logger.LogInformation("Authenticating user {UserId} via auth service...", UserId);
+
+        var tokenResponse = await AuthService.AuthenticateUserAsync(userId: UserId);
+        if (tokenResponse == null)
         {
-            // Invalid user ID, redirect to home
-            Navigation.NavigateTo("/");
+            // Authentication failed - redirect to home with error
+            Logger.LogWarning("Authentication failed for user {UserId}", UserId);
+            Navigation.NavigateTo("/?error=auth_failed");
             return;
         }
 
-        // Create claims for the user
+        Logger.LogInformation("User {UserId} authenticated successfully. Token expires at {ExpiresAt}",
+            tokenResponse.Subject.Id,
+            tokenResponse.ExpiresAt);
+
+        // Create claims from the authenticated token response
         var claims = new List<Claim>
         {
-            new(ClaimTypes.NameIdentifier, user.Id),
-            new(ClaimTypes.Email, user.Email),
-            new(ClaimTypes.Name, user.DisplayName)
+            new(ClaimTypes.NameIdentifier, tokenResponse.Subject.Id),
+            new(ClaimTypes.Email, tokenResponse.Subject.Email),
+            new(ClaimTypes.Name, tokenResponse.Subject.DisplayName),
+            // Store the JWT token as a claim for potential API calls
+            new("jwt_token", tokenResponse.Token)
         };
-        
-        // Add role claims
-        foreach (var role in user.Roles)
+
+        // Add role claims from the token response
+        foreach (var role in tokenResponse.Subject.Roles)
         {
             claims.Add(new Claim(ClaimTypes.Role, role));
         }

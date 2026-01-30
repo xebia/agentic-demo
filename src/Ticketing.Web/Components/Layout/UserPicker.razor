@@ -1,5 +1,6 @@
 @using Ticketing.Web.Services.Auth
 @inject NavigationManager Navigation
+@inject AuthServiceClient AuthService
 
 <div class="user-picker dropdown">
     <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -11,21 +12,35 @@
     </button>
     <ul class="dropdown-menu dropdown-menu-end">
         <li><h6 class="dropdown-header">Switch User (Demo)</h6></li>
-        @foreach (var user in MockUser.DemoUsers.All)
+        @if (users == null)
         {
-            <li>
-                <a class="dropdown-item" href="@GetSwitchUserUrl(user)">
-                    <div class="d-flex flex-column">
-                        <span>@user.DisplayName</span>
-                        <small class="text-muted">@string.Join(", ", user.Roles)</small>
-                    </div>
-                </a>
-            </li>
+            <li><span class="dropdown-item-text text-muted">Loading...</span></li>
+        }
+        else
+        {
+            @foreach (var user in users)
+            {
+                <li>
+                    <a class="dropdown-item" href="@GetSwitchUserUrl(user)">
+                        <div class="d-flex flex-column">
+                            <span>@user.DisplayName</span>
+                            <small class="text-muted">@string.Join(", ", user.Roles)</small>
+                        </div>
+                    </a>
+                </li>
+            }
         }
     </ul>
 </div>
 
 @code {
+    private IReadOnlyList<MockUser>? users;
+
+    protected override async Task OnInitializedAsync()
+    {
+        users = await AuthService.GetAvailableUsersAsync();
+    }
+
     private string GetSwitchUserUrl(MockUser user)
     {
         return $"/auth/switch-user/{user.Id}";

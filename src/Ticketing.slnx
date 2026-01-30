@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="Ticketing.Auth/Ticketing.Auth.csproj" />
+  <Project Path="Ticketing.Chatbot/Ticketing.Chatbot.csproj" />
   <Project Path="Ticketing.DataAccess.Abstractions/Ticketing.DataAccess.Abstractions.csproj" />
   <Project Path="Ticketing.DataAccess/Ticketing.DataAccess.csproj" />
   <Project Path="Ticketing.Domain/Ticketing.Domain.csproj" />

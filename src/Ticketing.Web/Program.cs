@@ -1,4 +1,3 @@
-using System.Text;
 using Csla.Configuration;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -45,17 +44,13 @@ builder.Services.AddCsla(options => options
     .AddServerSideBlazor(blazor => blazor
         .UseInMemoryApplicationContextManager = true));
 
-// Configure JWT settings for API authentication
+// Configure JWT settings for API authentication via auth service
 var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>() ?? new JwtSettings();
-builder.Services.Configure<JwtSettings>(options =>
-{
-    options.SecretKey = jwtSettings.SecretKey;
-    options.Issuer = jwtSettings.Issuer;
-    options.Audience = jwtSettings.Audience;
-    options.ExpirationMinutes = jwtSettings.ExpirationMinutes;
-});
-builder.Services.AddScoped<JwtTokenService>();
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 builder.Services.AddScoped<ApiUserContext>();
+
+// Register auth service client for fetching users from central auth service
+builder.Services.AddHttpClient<AuthServiceClient>();
 
 // Configure authentication with both Cookie (for Blazor) and JWT Bearer (for API)
 builder.Services.AddHttpContextAccessor();
@@ -70,6 +65,10 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer("Bearer", options =>
 {
+    // Configure JWKS retrieval from auth service
+    var jwksUrl = $"{jwtSettings.AuthServiceUrl}/.well-known/jwks.json";
+    options.ConfigurationManager = new JwksConfigurationManager(jwksUrl);
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -77,8 +76,7 @@ builder.Services.AddAuthentication(options =>
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
         ValidIssuer = jwtSettings.Issuer,
-        ValidAudience = jwtSettings.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SecretKey))
+        ValidAudience = jwtSettings.Audience
     };
 });
 
@@ -148,7 +146,7 @@ app.MapStaticAssets();
 app.MapControllers(); // REST API endpoints
 
 // Map MCP endpoint at /mcp path
-// Requires JWT Bearer authentication - LLMs must obtain a token first via /api/auth/token
+// Requires JWT Bearer authentication - LLMs must obtain a token from auth service first
 app.MapMcp("/mcp")
     .RequireAuthorization(policy => policy
         .AddAuthenticationSchemes("Bearer")
