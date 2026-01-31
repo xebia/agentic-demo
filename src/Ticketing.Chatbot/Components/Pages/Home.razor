@@ -1,9 +1,11 @@
 @page "/"
 @using Ticketing.Chatbot.Models
 @using Ticketing.Chatbot.Services
+@using Markdig
 @inject AuthService AuthService
 @inject UserSessionService UserSession
 @inject McpClientService McpClient
+@inject ChatService? ChatService
 @rendermode InteractiveServer
 
 <PageTitle>Ticketing Chatbot</PageTitle>
@@ -90,7 +92,7 @@ else
                         }
                         else
                         {
-                            @message.Content
+                            @((MarkupString)RenderMarkdown(message.Content))
                         }
                     </div>
                 </div>
@@ -237,6 +239,36 @@ else
         font-size: 0.8rem;
     }
 
+    /* Markdown rendering styles */
+    .message-content p {
+        margin: 0 0 0.5rem 0;
+    }
+
+    .message-content p:last-child {
+        margin-bottom: 0;
+    }
+
+    .message-content ol,
+    .message-content ul {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+
+    .message-content li {
+        margin-bottom: 0.25rem;
+    }
+
+    .message-content strong {
+        font-weight: 600;
+    }
+
+    .message-content code {
+        background-color: rgba(0, 0, 0, 0.1);
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+
     .chat-input {
         display: flex;
         gap: 0.5rem;
@@ -290,6 +322,18 @@ else
     private bool isProcessing = false;
     private ElementReference chatContainer;
 
+    // Markdown pipeline for rendering AI responses
+    private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
+
+    private static string RenderMarkdown(string markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+            return string.Empty;
+        return Markdown.ToHtml(markdown, _markdownPipeline);
+    }
+
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
@@ -339,6 +383,9 @@ else
                     Role = ChatRoles.Assistant,
                     Content = $"Hello {selectedUser.DisplayName}! I'm your ticketing assistant. I can help you create tickets, check ticket status, and more. What would you like to do?"
                 });
+
+                // Clear chat service history for new conversation
+                ChatService?.ClearHistory();
             }
             else
             {
@@ -360,6 +407,7 @@ else
         UserSession.ClearUser();
         chatMessages.Clear();
         selectedUser = null;
+        ChatService?.ClearHistory();
     }
 
     private async Task HandleKeyPress(KeyboardEventArgs e)
@@ -394,14 +442,36 @@ else
 
         try
         {
-            // For MVP, we'll just acknowledge the message and show it was received
-            // Full LLM integration would go here
-            await Task.Delay(500); // Simulate processing
+            if (ChatService == null)
+            {
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Assistant,
+                    Content = "Chat service is not configured. Please ensure Azure OpenAI credentials are set in appsettings.json."
+                });
+                return;
+            }
 
+            // Get response from Azure OpenAI via ChatService
+            var result = await ChatService.SendMessageAsync(userMessage);
+
+            // Display any tool calls that were made
+            foreach (var toolCall in result.ToolCalls)
+            {
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Tool,
+                    Content = $"Arguments: {toolCall.Arguments}\n\nResult: {toolCall.Result}",
+                    IsToolCall = true,
+                    ToolName = toolCall.ToolName
+                });
+            }
+
+            // Display the assistant's response
             chatMessages.Add(new ChatMessage
             {
                 Role = ChatRoles.Assistant,
-                Content = $"I received your message: \"{userMessage}\". In the full implementation, I would process this with an LLM and call the appropriate MCP tools. For now, try clicking 'Show available tools' to see what tools are available via MCP."
+                Content = result.Response
             });
         }
         catch (Exception ex)

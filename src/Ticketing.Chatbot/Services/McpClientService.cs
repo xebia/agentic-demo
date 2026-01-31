@@ -56,8 +56,14 @@ public class McpClientService
     {
         if (!_userSession.IsAuthenticated)
         {
+            _logger.LogError("CallToolAsync failed: User not authenticated");
             throw new InvalidOperationException("User not authenticated");
         }
+
+        _logger.LogInformation("Calling MCP tool: {ToolName}, User: {User}, HasToken: {HasToken}", 
+            toolName, 
+            _userSession.CurrentUser?.Email ?? "unknown",
+            !string.IsNullOrEmpty(_userSession.AccessToken));
 
         var request = new
         {
@@ -79,40 +85,52 @@ public class McpClientService
         var json = JsonSerializer.Serialize(request);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
+        _logger.LogInformation("Sending MCP request to {Url}", _settings.McpEndpointUrl);
+        _logger.LogDebug("MCP request body: {Request}", json);
+        _logger.LogDebug("Using Bearer token: {TokenPreview}...", 
+            _userSession.AccessToken?.Substring(0, Math.Min(20, _userSession.AccessToken?.Length ?? 0)) ?? "NULL");
+
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _settings.McpEndpointUrl);
         httpRequest.Content = content;
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _userSession.AccessToken);
         httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
-        _logger.LogDebug("Sending MCP request: {Request}", json);
-
-        var response = await _httpClient.SendAsync(httpRequest);
-        var responseBody = await response.Content.ReadAsStringAsync();
-
-        _logger.LogDebug("MCP response: {Response}", responseBody);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            _logger.LogError("MCP request failed: {StatusCode} - {Body}", response.StatusCode, responseBody);
-            return null;
-        }
+            var response = await _httpClient.SendAsync(httpRequest);
+            var responseBody = await response.Content.ReadAsStringAsync();
 
-        // Check if response is SSE format (text/event-stream)
-        var contentType = response.Content.Headers.ContentType?.MediaType;
-        if (contentType == "text/event-stream")
-        {
-            // Parse SSE format - extract JSON from "data:" lines
-            var jsonData = ParseSseResponse(responseBody);
-            if (jsonData == null)
+            _logger.LogInformation("MCP response status: {StatusCode}", response.StatusCode);
+            _logger.LogDebug("MCP response body: {Response}", responseBody);
+
+            if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Failed to parse SSE response");
+                _logger.LogError("MCP request failed: {StatusCode} - {Body}", response.StatusCode, responseBody);
                 return null;
             }
-            return JsonDocument.Parse(jsonData);
-        }
 
-        return JsonDocument.Parse(responseBody);
+            // Check if response is SSE format (text/event-stream)
+            var contentType = response.Content.Headers.ContentType?.MediaType;
+            if (contentType == "text/event-stream")
+            {
+                // Parse SSE format - extract JSON from "data:" lines
+                var jsonData = ParseSseResponse(responseBody);
+                if (jsonData == null)
+                {
+                    _logger.LogError("Failed to parse SSE response");
+                    return null;
+                }
+                return JsonDocument.Parse(jsonData);
+            }
+
+            return JsonDocument.Parse(responseBody);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception during MCP request to {Url}", _settings.McpEndpointUrl);
+            throw;
+        }
     }
 
     private string? ParseSseResponse(string sseResponse)
