@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agentic Demo — an IT support and purchasing system demonstrating agent-based architecture, A2A communication, and async messaging patterns. Built with .NET 10, CSLA .NET 10, Blazor, and Entity Framework Core against SQL Server LocalDB.
+Agentic Demo — an IT support and purchasing system demonstrating agent-based architecture, A2A communication, and async messaging patterns. Built with .NET 10, CSLA .NET 10, Blazor, and Entity Framework Core. Uses .NET Aspire for orchestration with containerized SQL Server and Azure Service Bus emulator (or standalone with LocalDB).
 
 ## Build & Run Commands
 
@@ -12,7 +12,10 @@ Agentic Demo — an IT support and purchasing system demonstrating agent-based a
 # Build the solution
 dotnet build src/Ticketing.slnx
 
-# Run the web app (database auto-creates with migrations + demo data)
+# Run all services with Aspire (recommended — requires Docker Desktop)
+dotnet run --project src/Ticketing.AppHost
+
+# Run the web app standalone (uses LocalDB, no orchestration)
 dotnet run --project src/Ticketing.Web
 
 # Run with watch mode
@@ -22,7 +25,9 @@ dotnet watch run --project src/Ticketing.Web
 dotnet restore src/Ticketing.slnx
 ```
 
-**Dev URLs**: http://localhost:5254 | https://localhost:7029
+**Aspire dashboard**: opens automatically on `dotnet run --project src/Ticketing.AppHost` — shows traces, logs, and metrics for all services.
+
+**Dev URLs (standalone)**: http://localhost:5254 | https://localhost:7029
 **API docs (Scalar)**: https://localhost:7029/scalar/v1
 
 ## EF Core Migrations
@@ -49,12 +54,14 @@ dotnet test src/Ticketing.slnx
 
 ## Solution Architecture
 
-Four projects in `src/Ticketing.slnx`:
+Projects in `src/Ticketing.slnx`:
 
 - **Ticketing.Domain** — CSLA 10 business objects (`TicketEdit`, `TicketInfo`, `TicketList`). All business logic, validation rules, and data portal operations live here.
 - **Ticketing.DataAccess.Abstractions** — DAL interfaces (`ITicketEditDal`, `ITicketListDal`) and DTOs. No implementation dependencies.
 - **Ticketing.DataAccess** — EF Core implementation of DAL interfaces. `TicketingDbContext`, entity configurations, migrations, and `DemoDataSeeder`.
 - **Ticketing.Web** — Blazor Server app (SSR + InteractiveServer) with REST API (`TicketsController`). Dual auth: JWT Bearer for API, Cookie for Blazor with mock auth for demo.
+- **Ticketing.ServiceDefaults** — Aspire shared project: OpenTelemetry, health checks, service discovery, HTTP resilience.
+- **Ticketing.AppHost** — Aspire orchestrator: starts all services + SQL Server container + Service Bus emulator.
 
 **Dependency flow**: Web → Domain → DataAccess.Abstractions ← DataAccess
 

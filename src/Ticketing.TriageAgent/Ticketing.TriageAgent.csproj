@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Ticketing.ServiceDefaults\Ticketing.ServiceDefaults.csproj" />
     <ProjectReference Include="..\Ticketing.Messaging.Abstractions\Ticketing.Messaging.Abstractions.csproj" />
     <ProjectReference Include="..\Ticketing.Messaging.ServiceBus\Ticketing.Messaging.ServiceBus.csproj" />
   </ItemGroup>

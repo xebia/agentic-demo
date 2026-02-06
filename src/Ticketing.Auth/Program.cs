@@ -4,6 +4,8 @@ using Ticketing.Auth.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
+
 // Configure auth settings
 builder.Services.Configure<AuthSettings>(
     builder.Configuration.GetSection("AuthSettings"));
@@ -53,5 +55,7 @@ app.MapGet("/", () => Results.Ok(new
         "GET /users - List available demo users"
     }
 }));
+
+app.MapDefaultEndpoints();
 
 app.Run();

@@ -21,17 +21,21 @@ using Ticketing.Web.Services.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddCascadingAuthenticationState();
 
-// Configure Entity Framework with LocalDB
+// Configure Entity Framework
 builder.Services.AddDbContext<TicketingDbContext>(options =>
     options.UseSqlServer(
-        builder.Configuration.GetConnectionString("TicketingDb") 
+        builder.Configuration.GetConnectionString("TicketingDb")
         ?? "Server=(localdb)\\mssqllocaldb;Database=TicketingDb;Trusted_Connection=True;MultipleActiveResultSets=true"));
+
+builder.EnrichSqlServerDbContext<TicketingDbContext>();
 
 // Register DAL services
 builder.Services.AddScoped<ITicketIdGenerator, TicketIdGenerator>();
@@ -158,5 +162,7 @@ app.MapMcp("/mcp")
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+app.MapDefaultEndpoints();
 
 app.Run();
