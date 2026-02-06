@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Csla;
 using ModelContextProtocol.Server;
 using Ticketing.Domain;
+using Ticketing.Messaging.Abstractions;
 using Ticketing.Web.Services.Auth;
 
 namespace Ticketing.Web.Mcp;
@@ -14,7 +15,8 @@ namespace Ticketing.Web.Mcp;
 public class TicketingTools(
     IDataPortal<TicketList> ticketListPortal,
     IDataPortal<TicketEdit> ticketEditPortal,
-    McpUserContext userContext)
+    McpUserContext userContext,
+    IEventPublisher eventPublisher)
 {
 
     /// <summary>
@@ -197,8 +199,23 @@ public class TicketingTools(
 
         ticket = await ticket.SaveAsync();
 
-        return new TicketDetailResult 
-        { 
+        // Publish ticket.created event for downstream agents
+        await eventPublisher.PublishAsync(new TicketEvent
+        {
+            EventType = TicketEventTypes.TicketCreated,
+            Payload = new TicketEventPayload
+            {
+                TicketId = ticket.TicketId,
+                Title = ticket.Title,
+                Status = ticket.Status.ToString(),
+                Priority = ticket.Priority.ToString(),
+                Category = ticket.Category?.ToString(),
+                CreatedBy = ticket.CreatedBy
+            }
+        });
+
+        return new TicketDetailResult
+        {
             Ticket = TicketDetail.FromTicketEdit(ticket),
             Message = $"Ticket {ticket.TicketId} created successfully."
         };

@@ -12,6 +12,7 @@ using Ticketing.DataAccess.Seeding;
 using Ticketing.DataAccess.Services;
 using Ticketing.Domain;
 using Ticketing.Domain.Services;
+using Ticketing.Messaging.ServiceBus;
 using Ticketing.Web.Components;
 using Ticketing.Web.Mcp;
 using Ticketing.Web.Middleware;
@@ -86,6 +87,9 @@ builder.Services.AddScoped<AuthenticationStateProvider>(sp =>
     sp.GetRequiredService<MockAuthenticationStateProvider>());
 builder.Services.AddScoped<IUserContext, BlazorUserContext>();
 builder.Services.AddCascadingAuthenticationState();
+
+// Add event publishing via Azure Service Bus
+builder.Services.AddServiceBusMessaging(builder.Configuration);
 
 // Add controllers for REST API
 builder.Services.AddControllers();

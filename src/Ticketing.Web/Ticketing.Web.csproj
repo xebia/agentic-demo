@@ -4,6 +4,8 @@
     <ProjectReference Include="..\Ticketing.DataAccess.Abstractions\Ticketing.DataAccess.Abstractions.csproj" />
     <ProjectReference Include="..\Ticketing.Domain\Ticketing.Domain.csproj" />
     <ProjectReference Include="..\Ticketing.DataAccess\Ticketing.DataAccess.csproj" />
+    <ProjectReference Include="..\Ticketing.Messaging.Abstractions\Ticketing.Messaging.Abstractions.csproj" />
+    <ProjectReference Include="..\Ticketing.Messaging.ServiceBus\Ticketing.Messaging.ServiceBus.csproj" />
   </ItemGroup>
 
   <ItemGroup>
