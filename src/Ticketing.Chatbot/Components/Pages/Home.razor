@@ -1,0 +1,535 @@
+@page "/"
+@using Ticketing.Chatbot.Models
+@using Ticketing.Chatbot.Services
+@using Markdig
+@inject AuthService AuthService
+@inject UserSessionService UserSession
+@inject McpClientService McpClient
+@inject ChatService? ChatService
+@rendermode InteractiveServer
+
+<PageTitle>Ticketing Chatbot</PageTitle>
+
+@if (!UserSession.IsAuthenticated)
+{
+    <div class="login-container">
+        <h2>Select a User</h2>
+        <p class="text-muted">Choose a demo user to start chatting with the ticketing assistant.</p>
+
+        @if (isLoadingUsers)
+        {
+            <p>Loading users...</p>
+        }
+        else if (users.Count == 0)
+        {
+            <div class="alert alert-warning">
+                <strong>Auth service unavailable.</strong> Make sure the auth service is running at the configured URL.
+                <button class="btn btn-sm btn-outline-primary ms-2" @onclick="LoadUsers">Retry</button>
+            </div>
+        }
+        else
+        {
+            <div class="user-list">
+                @foreach (var user in users)
+                {
+                    <div class="user-card @(selectedUser?.Id == user.Id ? "selected" : "")" @onclick="() => SelectUser(user)">
+                        <div class="user-name">@user.DisplayName</div>
+                        <div class="user-email">@user.Email</div>
+                        <div class="user-roles">@string.Join(", ", user.Roles)</div>
+                    </div>
+                }
+            </div>
+
+            <button class="btn btn-primary mt-3" @onclick="Login" disabled="@(selectedUser == null || isLoggingIn)">
+                @if (isLoggingIn)
+                {
+                    <span>Logging in...</span>
+                }
+                else
+                {
+                    <span>Continue as @(selectedUser?.DisplayName ?? "...")</span>
+                }
+            </button>
+        }
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger mt-3">@errorMessage</div>
+        }
+    </div>
+}
+else
+{
+    <div class="chat-container">
+        <div class="chat-header">
+            <h4>Ticketing Assistant</h4>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="Logout">Switch User</button>
+        </div>
+
+        <div class="chat-messages" @ref="chatContainer">
+            @foreach (var message in chatMessages)
+            {
+                <div class="message @message.Role">
+                    <div class="message-header">
+                        @if (message.Role == ChatRoles.User)
+                        {
+                            <strong>@UserSession.CurrentUser?.DisplayName</strong>
+                        }
+                        else if (message.Role == ChatRoles.Assistant)
+                        {
+                            <strong>Assistant</strong>
+                        }
+                        else if (message.Role == ChatRoles.Tool)
+                        {
+                            <strong>Tool: @message.ToolName</strong>
+                        }
+                        <span class="timestamp">@message.Timestamp.ToString("HH:mm")</span>
+                    </div>
+                    <div class="message-content">
+                        @if (message.IsToolCall)
+                        {
+                            <pre class="tool-result">@message.Content</pre>
+                        }
+                        else
+                        {
+                            @((MarkupString)RenderMarkdown(message.Content))
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (isProcessing)
+            {
+                <div class="message assistant">
+                    <div class="message-content typing">
+                        <span>.</span><span>.</span><span>.</span>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="chat-input">
+            <input type="text"
+                   @bind="currentMessage"
+                   @bind:event="oninput"
+                   @onkeypress="HandleKeyPress"
+                   placeholder="Type your message..."
+                   disabled="@isProcessing" />
+            <button class="btn btn-primary" @onclick="SendMessage" disabled="@(isProcessing || string.IsNullOrWhiteSpace(currentMessage))">
+                Send
+            </button>
+        </div>
+
+        <div class="quick-actions">
+            <span class="text-muted">Quick actions:</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick='() => SendQuickMessage("List my tickets")'>List my tickets</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick='() => SendQuickMessage("Create a ticket for my laptop issue")'>Create ticket</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="ListTools">Show available tools</button>
+        </div>
+    </div>
+}
+
+<style>
+    .login-container {
+        max-width: 600px;
+        margin: 2rem auto;
+        padding: 2rem;
+    }
+
+    .user-list {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    }
+
+    .user-card {
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .user-card:hover {
+        border-color: #007bff;
+        background-color: #f8f9fa;
+    }
+
+    .user-card.selected {
+        border-color: #007bff;
+        background-color: #e7f1ff;
+    }
+
+    .user-name {
+        font-weight: bold;
+        margin-bottom: 0.25rem;
+    }
+
+    .user-email {
+        color: #666;
+        font-size: 0.9rem;
+    }
+
+    .user-roles {
+        color: #007bff;
+        font-size: 0.8rem;
+        margin-top: 0.5rem;
+    }
+
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 100px);
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .chat-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .message {
+        max-width: 80%;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+    }
+
+    .message.user {
+        align-self: flex-end;
+        background-color: #007bff;
+        color: white;
+    }
+
+    .message.assistant {
+        align-self: flex-start;
+        background-color: #f0f0f0;
+    }
+
+    .message.tool {
+        align-self: flex-start;
+        background-color: #fff3cd;
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+
+    .message-header {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8rem;
+        margin-bottom: 0.25rem;
+        opacity: 0.8;
+    }
+
+    .tool-result {
+        margin: 0;
+        white-space: pre-wrap;
+        font-size: 0.8rem;
+    }
+
+    /* Markdown rendering styles */
+    .message-content p {
+        margin: 0 0 0.5rem 0;
+    }
+
+    .message-content p:last-child {
+        margin-bottom: 0;
+    }
+
+    .message-content ol,
+    .message-content ul {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+
+    .message-content li {
+        margin-bottom: 0.25rem;
+    }
+
+    .message-content strong {
+        font-weight: 600;
+    }
+
+    .message-content code {
+        background-color: rgba(0, 0, 0, 0.1);
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+
+    .chat-input {
+        display: flex;
+        gap: 0.5rem;
+        padding: 1rem;
+        border-top: 1px solid #e0e0e0;
+    }
+
+    .chat-input input {
+        flex: 1;
+        padding: 0.75rem;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+    }
+
+    .quick-actions {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0 1rem 1rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .typing span {
+        animation: blink 1.4s infinite;
+        font-size: 1.5rem;
+    }
+
+    .typing span:nth-child(2) {
+        animation-delay: 0.2s;
+    }
+
+    .typing span:nth-child(3) {
+        animation-delay: 0.4s;
+    }
+
+    @@keyframes blink {
+        0%, 100% { opacity: 0.2; }
+        50% { opacity: 1; }
+    }
+</style>
+
+@code {
+    private List<DemoUser> users = new();
+    private DemoUser? selectedUser;
+    private bool isLoadingUsers = true;
+    private bool isLoggingIn = false;
+    private string? errorMessage;
+
+    private List<ChatMessage> chatMessages = new();
+    private string currentMessage = "";
+    private bool isProcessing = false;
+    private ElementReference chatContainer;
+
+    // Markdown pipeline for rendering AI responses
+    private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
+
+    private static string RenderMarkdown(string markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+            return string.Empty;
+        return Markdown.ToHtml(markdown, _markdownPipeline);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers();
+    }
+
+    private async Task LoadUsers()
+    {
+        isLoadingUsers = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            users = await AuthService.GetAvailableUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load users: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingUsers = false;
+        }
+    }
+
+    private void SelectUser(DemoUser user)
+    {
+        selectedUser = user;
+    }
+
+    private async Task Login()
+    {
+        if (selectedUser == null) return;
+
+        isLoggingIn = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var token = await AuthService.GetTokenAsync(selectedUser.Email);
+            if (token != null)
+            {
+                UserSession.SetUser(selectedUser, token);
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Assistant,
+                    Content = $"Hello {selectedUser.DisplayName}! I'm your ticketing assistant. I can help you create tickets, check ticket status, and more. What would you like to do?"
+                });
+
+                // Clear chat service history for new conversation
+                ChatService?.ClearHistory();
+            }
+            else
+            {
+                errorMessage = "Failed to get authentication token.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Login failed: {ex.Message}";
+        }
+        finally
+        {
+            isLoggingIn = false;
+        }
+    }
+
+    private void Logout()
+    {
+        UserSession.ClearUser();
+        chatMessages.Clear();
+        selectedUser = null;
+        ChatService?.ClearHistory();
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(currentMessage))
+        {
+            await SendMessage();
+        }
+    }
+
+    private async Task SendQuickMessage(string message)
+    {
+        currentMessage = message;
+        await SendMessage();
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isProcessing) return;
+
+        var userMessage = currentMessage;
+        currentMessage = "";
+
+        chatMessages.Add(new ChatMessage
+        {
+            Role = ChatRoles.User,
+            Content = userMessage
+        });
+
+        isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            if (ChatService == null)
+            {
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Assistant,
+                    Content = "Chat service is not configured. Please ensure Azure OpenAI credentials are set in appsettings.json."
+                });
+                return;
+            }
+
+            // Get response from Azure OpenAI via ChatService
+            var result = await ChatService.SendMessageAsync(userMessage);
+
+            // Display any tool calls that were made
+            foreach (var toolCall in result.ToolCalls)
+            {
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Tool,
+                    Content = $"Arguments: {toolCall.Arguments}\n\nResult: {toolCall.Result}",
+                    IsToolCall = true,
+                    ToolName = toolCall.ToolName
+                });
+            }
+
+            // Display the assistant's response
+            chatMessages.Add(new ChatMessage
+            {
+                Role = ChatRoles.Assistant,
+                Content = result.Response
+            });
+        }
+        catch (Exception ex)
+        {
+            chatMessages.Add(new ChatMessage
+            {
+                Role = ChatRoles.Assistant,
+                Content = $"Sorry, there was an error: {ex.Message}"
+            });
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task ListTools()
+    {
+        isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await McpClient.ListToolsAsync();
+            if (result != null)
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(
+                    result.RootElement,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Tool,
+                    Content = json,
+                    IsToolCall = true,
+                    ToolName = "tools/list"
+                });
+            }
+            else
+            {
+                chatMessages.Add(new ChatMessage
+                {
+                    Role = ChatRoles.Assistant,
+                    Content = "Failed to list tools. Make sure the ticketing service is running."
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            chatMessages.Add(new ChatMessage
+            {
+                Role = ChatRoles.Assistant,
+                Content = $"Error listing tools: {ex.Message}"
+            });
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+}

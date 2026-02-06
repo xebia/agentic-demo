@@ -1,9 +1,9 @@
-using System.Text;
 using Csla.Configuration;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol.AspNetCore;
 using Scalar.AspNetCore;
 using Ticketing.DataAccess;
 using Ticketing.DataAccess.Abstractions;
@@ -13,6 +13,7 @@ using Ticketing.DataAccess.Services;
 using Ticketing.Domain;
 using Ticketing.Domain.Services;
 using Ticketing.Web.Components;
+using Ticketing.Web.Mcp;
 using Ticketing.Web.Middleware;
 using Ticketing.Web.OpenApi;
 using Ticketing.Web.Services.Auth;
@@ -43,17 +44,13 @@ builder.Services.AddCsla(options => options
     .AddServerSideBlazor(blazor => blazor
         .UseInMemoryApplicationContextManager = true));
 
-// Configure JWT settings for API authentication
+// Configure JWT settings for API authentication via auth service
 var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>() ?? new JwtSettings();
-builder.Services.Configure<JwtSettings>(options =>
-{
-    options.SecretKey = jwtSettings.SecretKey;
-    options.Issuer = jwtSettings.Issuer;
-    options.Audience = jwtSettings.Audience;
-    options.ExpirationMinutes = jwtSettings.ExpirationMinutes;
-});
-builder.Services.AddScoped<JwtTokenService>();
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 builder.Services.AddScoped<ApiUserContext>();
+
+// Register auth service client for fetching users from central auth service
+builder.Services.AddHttpClient<AuthServiceClient>();
 
 // Configure authentication with both Cookie (for Blazor) and JWT Bearer (for API)
 builder.Services.AddHttpContextAccessor();
@@ -68,6 +65,10 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer("Bearer", options =>
 {
+    // Configure JWKS retrieval from auth service
+    var jwksUrl = $"{jwtSettings.AuthServiceUrl}/.well-known/jwks.json";
+    options.ConfigurationManager = new JwksConfigurationManager(jwksUrl);
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -75,8 +76,7 @@ builder.Services.AddAuthentication(options =>
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
         ValidIssuer = jwtSettings.Issuer,
-        ValidAudience = jwtSettings.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SecretKey))
+        ValidAudience = jwtSettings.Audience
     };
 });
 
@@ -89,6 +89,14 @@ builder.Services.AddCascadingAuthenticationState();
 
 // Add controllers for REST API
 builder.Services.AddControllers();
+
+// Configure MCP Server for LLM agent access
+// MCP tools allow LLMs to act on behalf of authenticated users
+builder.Services.AddScoped<McpUserContext>();
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithTools<TicketingTools>()
+    .WithTools<FulfillmentTools>();
 
 // Configure OpenAPI documentation
 builder.Services.AddOpenApi("v1", options =>
@@ -130,12 +138,20 @@ app.MapScalarApiReference(options =>
         .WithTitle("Ticketing API")
         .WithTheme(ScalarTheme.BluePlanet)
         .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient)
-        .WithPreferredScheme("Bearer")
-        .WithHttpBearerAuthentication(bearer => bearer.Token = "");
+        .AddPreferredSecuritySchemes("Bearer")
+        .AddHttpAuthentication("Bearer", auth => auth.Token = "");
 });
 
 app.MapStaticAssets();
 app.MapControllers(); // REST API endpoints
+
+// Map MCP endpoint at /mcp path
+// Requires JWT Bearer authentication - LLMs must obtain a token from auth service first
+app.MapMcp("/mcp")
+    .RequireAuthorization(policy => policy
+        .AddAuthenticationSchemes("Bearer")
+        .RequireAuthenticatedUser());
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
