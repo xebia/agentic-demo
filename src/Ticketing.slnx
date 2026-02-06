@@ -4,5 +4,8 @@
   <Project Path="Ticketing.DataAccess.Abstractions/Ticketing.DataAccess.Abstractions.csproj" />
   <Project Path="Ticketing.DataAccess/Ticketing.DataAccess.csproj" />
   <Project Path="Ticketing.Domain/Ticketing.Domain.csproj" />
+  <Project Path="Ticketing.Messaging.Abstractions/Ticketing.Messaging.Abstractions.csproj" />
+  <Project Path="Ticketing.Messaging.ServiceBus/Ticketing.Messaging.ServiceBus.csproj" />
+  <Project Path="Ticketing.TriageAgent/Ticketing.TriageAgent.csproj" />
   <Project Path="Ticketing.Web/Ticketing.Web.csproj" />
 </Solution>

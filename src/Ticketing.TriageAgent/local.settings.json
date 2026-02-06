@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "ServiceBusConnection": "",
+    "ServiceBus:ConnectionString": "",
+    "AuthService:Url": "https://localhost:7069",
+    "AuthService:ClientId": "triage-agent",
+    "AuthService:ClientSecret": "secret-for-triage",
+    "TicketingApi:BaseUrl": "https://localhost:7029",
+    "AzureOpenAI:Endpoint": "https://<resource>.openai.azure.com/",
+    "AzureOpenAI:ApiKey": "",
+    "AzureOpenAI:DeploymentName": "gpt-4o"
+  }
+}
