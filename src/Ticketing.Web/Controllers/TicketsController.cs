@@ -2,6 +2,7 @@ using Csla;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Ticketing.Domain;
+using Ticketing.Messaging.Abstractions;
 using Ticketing.Web.Controllers.Models;
 using Ticketing.Web.Services.Auth;
 
@@ -19,17 +20,20 @@ public class TicketsController : ControllerBase
     private readonly IDataPortal<TicketList> _ticketListPortal;
     private readonly IDataPortal<TicketEdit> _ticketEditPortal;
     private readonly ApiUserContext _userContext;
+    private readonly IEventPublisher _eventPublisher;
 
     private string BaseUrl => $"{Request.Scheme}://{Request.Host}/api/tickets";
 
     public TicketsController(
         IDataPortal<TicketList> ticketListPortal,
         IDataPortal<TicketEdit> ticketEditPortal,
-        ApiUserContext userContext)
+        ApiUserContext userContext,
+        IEventPublisher eventPublisher)
     {
         _ticketListPortal = ticketListPortal;
         _ticketEditPortal = ticketEditPortal;
         _userContext = userContext;
+        _eventPublisher = eventPublisher;
     }
 
     /// <summary>
@@ -280,6 +284,9 @@ public class TicketsController : ControllerBase
             ticket.Priority = priority;
         }
 
+        // Track status before changes for event publishing
+        var previousStatus = ticket.Status;
+
         // Elevated access required for these fields
         if (hasElevatedAccess)
         {
@@ -342,6 +349,87 @@ public class TicketsController : ControllerBase
         // Save the ticket
         ticket = await ticket.SaveAsync();
 
+        // Publish events based on status changes
+        if (request.Status != null &&
+            Enum.TryParse<TicketStatus>(request.Status, ignoreCase: true, out var newStatus) &&
+            newStatus != previousStatus)
+        {
+            var eventType = newStatus switch
+            {
+                TicketStatus.Approved => TicketEventTypes.TicketApproved,
+                TicketStatus.Rejected => TicketEventTypes.TicketRejected,
+                TicketStatus.Closed => TicketEventTypes.TicketClosed,
+                _ => null
+            };
+
+            if (eventType != null)
+            {
+                await _eventPublisher.PublishAsync(new TicketEvent
+                {
+                    EventType = eventType,
+                    Payload = new TicketEventPayload
+                    {
+                        TicketId = ticket.TicketId,
+                        Title = ticket.Title,
+                        Status = ticket.Status.ToString(),
+                        AssignedQueue = ticket.AssignedQueue?.ToString(),
+                        ChangedBy = _userContext.CurrentUserId
+                    }
+                });
+            }
+
+            // Parent-child cascade: when a child ticket is closed, check if parent should auto-close
+            if (newStatus == TicketStatus.Closed && !string.IsNullOrEmpty(ticket.ParentTicketId))
+            {
+                await TryCascadeCloseParentAsync(ticket.ParentTicketId);
+            }
+        }
+
         return Ok(TicketDetailResponse.FromTicketEdit(ticket, BaseUrl));
+    }
+
+    /// <summary>
+    /// When all children of a parent ticket are closed, auto-close the parent.
+    /// </summary>
+    private async Task TryCascadeCloseParentAsync(string parentTicketId)
+    {
+        try
+        {
+            // Fetch all tickets to find children of this parent
+            var criteria = new TicketListCriteria { Limit = 100 };
+            var allTickets = await _ticketListPortal.FetchAsync(criteria);
+
+            var children = allTickets.Where(t => t.ParentTicketId == parentTicketId).ToList();
+            if (children.Count == 0)
+                return;
+
+            var allChildrenClosed = children.All(t => t.Status == TicketStatus.Closed);
+            if (!allChildrenClosed)
+                return;
+
+            var parent = await _ticketEditPortal.FetchAsync(parentTicketId);
+            if (parent.Status == TicketStatus.Closed)
+                return;
+
+            parent.Status = TicketStatus.Closed;
+            parent.ResolutionNotes = (parent.ResolutionNotes ?? "") + "\n\nAuto-closed: all child tickets resolved.";
+            parent = await parent.SaveAsync();
+
+            await _eventPublisher.PublishAsync(new TicketEvent
+            {
+                EventType = TicketEventTypes.TicketClosed,
+                Payload = new TicketEventPayload
+                {
+                    TicketId = parent.TicketId,
+                    Title = parent.Title,
+                    Status = "Closed",
+                    ChangedBy = "system"
+                }
+            });
+        }
+        catch (Exception)
+        {
+            // Don't fail the original update if cascade fails
+        }
     }
 }

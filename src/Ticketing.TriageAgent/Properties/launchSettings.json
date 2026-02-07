@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Ticketing.TriageAgent": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7071",
+      "environmentVariables": {
+        "AZURE_FUNCTIONS_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

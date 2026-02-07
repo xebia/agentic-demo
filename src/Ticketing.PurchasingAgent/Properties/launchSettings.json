@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Ticketing.PurchasingAgent": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7073",
+      "environmentVariables": {
+        "AZURE_FUNCTIONS_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
