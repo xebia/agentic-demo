@@ -22,6 +22,9 @@
     <ProjectReference Include="..\Ticketing.Web\Ticketing.Web.csproj" />
     <ProjectReference Include="..\Ticketing.Chatbot\Ticketing.Chatbot.csproj" />
     <ProjectReference Include="..\Ticketing.TriageAgent\Ticketing.TriageAgent.csproj" />
+    <ProjectReference Include="..\Ticketing.PurchasingAgent\Ticketing.PurchasingAgent.csproj" />
+    <ProjectReference Include="..\Ticketing.FulfillmentAgent\Ticketing.FulfillmentAgent.csproj" />
+    <ProjectReference Include="..\Ticketing.VendorMock\Ticketing.VendorMock.csproj" />
   </ItemGroup>
 
 </Project>

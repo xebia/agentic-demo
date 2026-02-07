@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      }
+    },
+    "logLevel": {
+      "default": "Information",
+      "Ticketing.FulfillmentAgent": "Information"
+    }
+  },
+  "extensions": {
+    "serviceBus": {
+      "maxConcurrentCalls": 1,
+      "autoCompleteMessages": true
+    }
+  }
+}

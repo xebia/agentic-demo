@@ -10,4 +10,7 @@
   <Project Path="Ticketing.Web/Ticketing.Web.csproj" />
   <Project Path="Ticketing.ServiceDefaults/Ticketing.ServiceDefaults.csproj" />
   <Project Path="Ticketing.AppHost/Ticketing.AppHost.csproj" />
+  <Project Path="Ticketing.PurchasingAgent/Ticketing.PurchasingAgent.csproj" />
+  <Project Path="Ticketing.FulfillmentAgent/Ticketing.FulfillmentAgent.csproj" />
+  <Project Path="Ticketing.VendorMock/Ticketing.VendorMock.csproj" />
 </Solution>
