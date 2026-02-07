@@ -43,7 +43,7 @@ builder.AddProject<Projects.Ticketing_Chatbot>("chatbot")
     .WaitFor(auth).WaitFor(web);
 
 // TriageAgent (Azure Functions worker)
-builder.AddProject<Projects.Ticketing_TriageAgent>("triageagent")
+builder.AddAzureFunctionsProject<Projects.Ticketing_TriageAgent>("triageagent")
     .WithReference(serviceBus)
     .WithReference(blobs)
     .WithEnvironment("ServiceBusConnection", serviceBus)
@@ -53,7 +53,7 @@ builder.AddProject<Projects.Ticketing_TriageAgent>("triageagent")
     .WaitFor(serviceBus).WaitFor(auth).WaitFor(web).WaitFor(storage);
 
 // FulfillmentAgent (Azure Functions worker — HTTP + Service Bus triggers)
-var fulfillmentAgent = builder.AddProject<Projects.Ticketing_FulfillmentAgent>("fulfillmentagent")
+var fulfillmentAgent = builder.AddAzureFunctionsProject<Projects.Ticketing_FulfillmentAgent>("fulfillmentagent")
     .WithReference(serviceBus)
     .WithReference(blobs)
     .WithEnvironment("ServiceBusConnection", serviceBus)
@@ -64,14 +64,14 @@ var fulfillmentAgent = builder.AddProject<Projects.Ticketing_FulfillmentAgent>("
     .WaitFor(serviceBus).WaitFor(auth).WaitFor(web).WaitFor(storage).WaitFor(vendorMock);
 
 // PurchasingAgent (Azure Functions worker — Service Bus triggers)
-builder.AddProject<Projects.Ticketing_PurchasingAgent>("purchasingagent")
+builder.AddAzureFunctionsProject<Projects.Ticketing_PurchasingAgent>("purchasingagent")
     .WithReference(serviceBus)
     .WithReference(blobs)
     .WithEnvironment("ServiceBusConnection", serviceBus)
     .WithEnvironment("ServiceBus__ConnectionString", serviceBus)
     .WithEnvironment("AuthService__Url", auth.GetEndpoint("https"))
     .WithEnvironment("TicketingApi__BaseUrl", web.GetEndpoint("https"))
-    .WithEnvironment("FulfillmentApi__BaseUrl", fulfillmentAgent.GetEndpoint("https"))
+    .WithEnvironment("FulfillmentApi__BaseUrl", fulfillmentAgent.GetEndpoint("http"))
     .WaitFor(serviceBus).WaitFor(auth).WaitFor(web).WaitFor(storage).WaitFor(fulfillmentAgent);
 
 // Vendor Mock needs to call back to Web API
