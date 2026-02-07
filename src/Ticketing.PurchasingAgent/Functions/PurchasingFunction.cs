@@ -114,7 +114,15 @@ public class PurchasingFunction
 
         if (decision.Items.Count == 0)
         {
-            _logger.LogWarning("LLM returned no items for ticket {TicketId}", ticketId);
+            _logger.LogWarning("LLM returned no items for ticket {TicketId}, updating ticket for human review", ticketId);
+
+            var existingNotes = ticket.TriageNotes ?? "";
+            await _apiClient.UpdateTicketAsync(ticketId, new UpdateTicketRequest
+            {
+                Status = "InProgress",
+                TriageNotes = $"{existingNotes}\n\n--- Purchasing Analysis ({DateTime.UtcNow:u}) ---\nAutomated analysis could not identify specific items to purchase from this request.\nTitle: {ticket.Title}\nDescription: {ticket.Description}\n\nHuman review is needed to clarify the purchase requirements."
+            }, cancellationToken);
+
             return;
         }
 
@@ -134,6 +142,26 @@ public class PurchasingFunction
         // 5. Build triage notes with quote details
         var quoteDetails = string.Join("\n", quote.LineItems.Select(i =>
             $"- {i.Sku}: {i.Name} — ${i.UnitPrice:F2} x {i.Quantity}{(i.Available ? "" : " (UNAVAILABLE)")}"));
+
+        // 5a. If quote is unavailable, update ticket and return early
+        if (!quote.Available)
+        {
+            _logger.LogWarning("Quote unavailable for ticket {TicketId}, items cannot be fulfilled", ticketId);
+
+            var unavailableItems = quote.LineItems
+                .Where(i => !i.Available)
+                .Select(i => i.Name)
+                .ToList();
+
+            var existingNotes = ticket.TriageNotes ?? "";
+            await _apiClient.UpdateTicketAsync(ticketId, new UpdateTicketRequest
+            {
+                Status = "InProgress",
+                TriageNotes = $"{existingNotes}\n\n--- Purchasing Analysis ({DateTime.UtcNow:u}) ---\n{decision.Reasoning}\n\nQuote Details:\n{quoteDetails}\n\nUnavailable items: {string.Join(", ", unavailableItems)}\nThe requested items are not available from the vendor catalog. Human review is needed to find alternatives or cancel the request."
+            }, cancellationToken);
+
+            return;
+        }
 
         var notes = $"""
             --- Purchasing Analysis ---

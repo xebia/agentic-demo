@@ -56,6 +56,11 @@ public class VendorCallbackController : ControllerBase
             // Update purchase ticket to Fulfilled
             ticket.Status = TicketStatus.Fulfilled;
             ticket.ResolutionNotes = $"Order {request.OrderId} delivered. {request.Message}";
+
+            var deliveryItemSummary = string.Join("\n", request.Items.Select(i => $"  - {i.Name} (SKU: {i.Sku}) x{i.Quantity}"));
+            var existingTriageNotes = ticket.TriageNotes ?? "";
+            ticket.TriageNotes = $"{existingTriageNotes}\n\n--- Delivery Completed ({DateTime.UtcNow:u}) ---\nOrder ID: {request.OrderId}\nItems delivered:\n{deliveryItemSummary}\n{request.Message}";
+
             ticket = await ticket.SaveAsync();
 
             _logger.LogInformation("Ticket {TicketId} marked as Fulfilled", request.TicketId);
@@ -92,21 +97,28 @@ public class VendorCallbackController : ControllerBase
         }
         else if (string.Equals(request.Status, "unfulfillable", StringComparison.OrdinalIgnoreCase))
         {
-            // Update purchase ticket to Rejected
-            ticket.Status = TicketStatus.Rejected;
+            // Reassign to Purchasing for human review instead of dead-ending as Rejected
+            ticket.Status = TicketStatus.InProgress;
+            ticket.AssignedQueue = TicketQueue.Purchasing;
             ticket.ResolutionNotes = $"Order {request.OrderId} could not be fulfilled: {request.Message}";
+
+            var existingTriageNotes = ticket.TriageNotes ?? "";
+            ticket.TriageNotes = $"{existingTriageNotes}\n\n--- Vendor Fulfillment Failed ({DateTime.UtcNow:u}) ---\nOrder ID: {request.OrderId}\nReason: {request.Message}\nReassigned to Purchasing queue for human review and alternative sourcing.";
+
             ticket = await ticket.SaveAsync();
 
-            _logger.LogInformation("Ticket {TicketId} marked as Rejected (unfulfillable)", request.TicketId);
+            _logger.LogInformation(
+                "Ticket {TicketId} reassigned to Purchasing (vendor unfulfillable)", request.TicketId);
 
             await _eventPublisher.PublishAsync(new TicketEvent
             {
-                EventType = TicketEventTypes.TicketRejected,
+                EventType = TicketEventTypes.TicketAssigned,
                 Payload = new TicketEventPayload
                 {
                     TicketId = request.TicketId,
                     Title = ticket.Title,
-                    Status = "Rejected",
+                    Status = "InProgress",
+                    AssignedQueue = "Purchasing",
                     ChangedBy = "vendor-callback"
                 }
             });
