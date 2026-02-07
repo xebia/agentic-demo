@@ -97,7 +97,16 @@ public class FulfillmentFunction
         var items = ParseItemsFromTriageNotes(ticket.TriageNotes);
         if (items.Count == 0)
         {
-            _logger.LogWarning("No items found in triage notes for ticket {TicketId}", ticketId);
+            _logger.LogWarning("No items found in triage notes for ticket {TicketId}, reassigning to Purchasing", ticketId);
+
+            var currentNotes = ticket.TriageNotes ?? "";
+            await _apiClient.UpdateTicketAsync(ticketId, new UpdateTicketRequest
+            {
+                Status = "InProgress",
+                AssignedQueue = "Purchasing",
+                TriageNotes = $"{currentNotes}\n\n--- Fulfillment ({DateTime.UtcNow:u}) ---\nCould not parse item SKUs from triage notes. Unable to submit order to vendor.\nManual review is needed to add valid SKU references before fulfillment can proceed."
+            }, cancellationToken);
+
             return;
         }
 
@@ -120,11 +129,13 @@ public class FulfillmentFunction
             "Order {OrderId} submitted for ticket {TicketId}, total: {Total:C}",
             orderResponse.OrderId, ticketId, orderResponse.Total);
 
-        // Update ticket with order reference
+        // Update ticket with order reference and item details
         var existingNotes = ticket.TriageNotes ?? "";
+        var itemDetails = string.Join("\n", orderResponse.Items.Select(i =>
+            $"  - {i.Sku}: {i.Name} — ${i.UnitPrice:F2} x {i.Quantity}"));
         await _apiClient.UpdateTicketAsync(ticketId, new UpdateTicketRequest
         {
-            TriageNotes = $"{existingNotes}\n\n--- Fulfillment ---\nOrder ID: {orderResponse.OrderId}\nOrder submitted at: {orderResponse.CreatedAt:u}\nTotal: {orderResponse.Total:C}"
+            TriageNotes = $"{existingNotes}\n\n--- Fulfillment ({DateTime.UtcNow:u}) ---\nOrder ID: {orderResponse.OrderId}\nOrder submitted at: {orderResponse.CreatedAt:u}\nItems:\n{itemDetails}\nTotal: {orderResponse.Total:C}\nStatus: Awaiting vendor processing"
         }, cancellationToken);
 
         // Publish order-submitted event

@@ -81,7 +81,7 @@ public class TicketingDbContext : DbContext
                 .HasMaxLength(50);
 
             entity.Property(e => e.TriageNotes)
-                .HasMaxLength(500);
+                .HasColumnType("nvarchar(max)");
 
             entity.Property(e => e.ResolutionNotes)
                 .HasColumnType("nvarchar(max)");

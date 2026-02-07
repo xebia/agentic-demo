@@ -56,7 +56,7 @@ public partial class TicketEdit : BusinessBase<TicketEdit>
     [StringLength(500)]
     public partial string? TriageDecision { get; set; }
 
-    [StringLength(500)]
+    [StringLength(8000)]
     public partial string? TriageNotes { get; set; }
 
     [StringLength(2000)]
