@@ -2,7 +2,6 @@ using System.ComponentModel;
 using Csla;
 using ModelContextProtocol.Server;
 using Ticketing.Domain;
-using Ticketing.Messaging.Abstractions;
 using Ticketing.Web.Services.Auth;
 
 namespace Ticketing.Web.Mcp;
@@ -15,8 +14,7 @@ namespace Ticketing.Web.Mcp;
 public class TicketingTools(
     IDataPortal<TicketList> ticketListPortal,
     IDataPortal<TicketEdit> ticketEditPortal,
-    McpUserContext userContext,
-    IEventPublisher eventPublisher)
+    McpUserContext userContext)
 {
 
     /// <summary>
@@ -197,22 +195,8 @@ public class TicketingTools(
             return new TicketDetailResult { Error = $"Validation failed: {string.Join("; ", errors)}" };
         }
 
+        // Save the ticket (publishes ticket.created event via data portal)
         ticket = await ticket.SaveAsync();
-
-        // Publish ticket.created event for downstream agents
-        await eventPublisher.PublishAsync(new TicketEvent
-        {
-            EventType = TicketEventTypes.TicketCreated,
-            Payload = new TicketEventPayload
-            {
-                TicketId = ticket.TicketId,
-                Title = ticket.Title,
-                Status = ticket.Status.ToString(),
-                Priority = ticket.Priority.ToString(),
-                Category = ticket.Category?.ToString(),
-                CreatedBy = ticket.CreatedBy
-            }
-        });
 
         return new TicketDetailResult
         {

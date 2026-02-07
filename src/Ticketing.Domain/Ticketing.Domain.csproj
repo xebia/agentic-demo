@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ticketing.DataAccess.Abstractions\Ticketing.DataAccess.Abstractions.csproj" />
+    <ProjectReference Include="..\Ticketing.Messaging.Abstractions\Ticketing.Messaging.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
