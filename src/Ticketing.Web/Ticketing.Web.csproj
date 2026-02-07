@@ -6,6 +6,7 @@
     <ProjectReference Include="..\Ticketing.DataAccess\Ticketing.DataAccess.csproj" />
     <ProjectReference Include="..\Ticketing.Messaging.Abstractions\Ticketing.Messaging.Abstractions.csproj" />
     <ProjectReference Include="..\Ticketing.Messaging.ServiceBus\Ticketing.Messaging.ServiceBus.csproj" />
+    <ProjectReference Include="..\Ticketing.ServiceDefaults\Ticketing.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -13,6 +14,7 @@
     <PackageReference Include="Csla.Blazor" Version="10.*" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.2" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
+    <PackageReference Include="Aspire.Microsoft.EntityFrameworkCore.SqlServer" Version="9.2.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.2" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.3.0-preview.1" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.12.24" />

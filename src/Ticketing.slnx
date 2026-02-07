@@ -8,4 +8,6 @@
   <Project Path="Ticketing.Messaging.ServiceBus/Ticketing.Messaging.ServiceBus.csproj" />
   <Project Path="Ticketing.TriageAgent/Ticketing.TriageAgent.csproj" />
   <Project Path="Ticketing.Web/Ticketing.Web.csproj" />
+  <Project Path="Ticketing.ServiceDefaults/Ticketing.ServiceDefaults.csproj" />
+  <Project Path="Ticketing.AppHost/Ticketing.AppHost.csproj" />
 </Solution>

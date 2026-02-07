@@ -7,6 +7,8 @@ using Ticketing.TriageAgent.Services;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
+
 // Register auth token provider (singleton — manages its own token cache)
 builder.Services.AddSingleton<AuthTokenProvider>();
 builder.Services.AddHttpClient<AuthTokenProvider>();

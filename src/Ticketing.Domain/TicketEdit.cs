@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using Csla;
 using Ticketing.DataAccess.Abstractions;
 using Ticketing.Domain.Services;
+using Ticketing.Messaging.Abstractions;
 
 namespace Ticketing.Domain;
 
@@ -124,10 +125,10 @@ public partial class TicketEdit : BusinessBase<TicketEdit>
     #region Data Access
 
     [Insert]
-    private void Insert([Inject] ITicketEditDal dal, [Inject] ITicketHistoryDal historyDal, [Inject] IUserContext userContext)
+    private async Task Insert([Inject] ITicketEditDal dal, [Inject] ITicketHistoryDal historyDal, [Inject] IUserContext userContext, [Inject] IEventPublisher eventPublisher)
     {
         LoadProperty(UpdatedAtProperty, DateTime.UtcNow);
-        
+
         var dto = CreateDto();
         dal.Insert(dto);
 
@@ -140,6 +141,21 @@ public partial class TicketEdit : BusinessBase<TicketEdit>
             userContext.CurrentUserId,
             DateTime.UtcNow,
             "New ticket created"));
+
+        // Publish ticket.created event for downstream agents
+        await eventPublisher.PublishAsync(new TicketEvent
+        {
+            EventType = TicketEventTypes.TicketCreated,
+            Payload = new TicketEventPayload
+            {
+                TicketId = ReadProperty(TicketIdProperty)!,
+                Title = ReadProperty(TitleProperty)!,
+                Status = ReadProperty(StatusProperty).ToString(),
+                Priority = ReadProperty(PriorityProperty).ToString(),
+                Category = ReadProperty(CategoryProperty)?.ToString(),
+                CreatedBy = ReadProperty(CreatedByProperty)!
+            }
+        });
     }
 
     [Update]

@@ -2,7 +2,6 @@ using Csla;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Ticketing.Domain;
-using Ticketing.Messaging.Abstractions;
 using Ticketing.Web.Controllers.Models;
 using Ticketing.Web.Services.Auth;
 
@@ -20,20 +19,17 @@ public class TicketsController : ControllerBase
     private readonly IDataPortal<TicketList> _ticketListPortal;
     private readonly IDataPortal<TicketEdit> _ticketEditPortal;
     private readonly ApiUserContext _userContext;
-    private readonly IEventPublisher _eventPublisher;
 
     private string BaseUrl => $"{Request.Scheme}://{Request.Host}/api/tickets";
 
     public TicketsController(
         IDataPortal<TicketList> ticketListPortal,
         IDataPortal<TicketEdit> ticketEditPortal,
-        ApiUserContext userContext,
-        IEventPublisher eventPublisher)
+        ApiUserContext userContext)
     {
         _ticketListPortal = ticketListPortal;
         _ticketEditPortal = ticketEditPortal;
         _userContext = userContext;
-        _eventPublisher = eventPublisher;
     }
 
     /// <summary>
@@ -209,23 +205,8 @@ public class TicketsController : ControllerBase
             });
         }
 
-        // Save the ticket
+        // Save the ticket (publishes ticket.created event via data portal)
         ticket = await ticket.SaveAsync();
-
-        // Publish ticket.created event for downstream agents
-        await _eventPublisher.PublishAsync(new TicketEvent
-        {
-            EventType = TicketEventTypes.TicketCreated,
-            Payload = new TicketEventPayload
-            {
-                TicketId = ticket.TicketId,
-                Title = ticket.Title,
-                Status = ticket.Status.ToString(),
-                Priority = ticket.Priority.ToString(),
-                Category = ticket.Category?.ToString(),
-                CreatedBy = ticket.CreatedBy
-            }
-        });
 
         var response = TicketDetailResponse.FromTicketEdit(ticket, BaseUrl);
         return CreatedAtAction(nameof(GetTicket), new { ticketId = ticket.TicketId }, response);
