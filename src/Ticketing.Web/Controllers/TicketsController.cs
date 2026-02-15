@@ -21,6 +21,7 @@ public class TicketsController : ControllerBase
     private readonly IDataPortal<TicketEdit> _ticketEditPortal;
     private readonly ApiUserContext _userContext;
     private readonly IEventPublisher _eventPublisher;
+    private readonly ILogger<TicketsController> _logger;
 
     private string BaseUrl => $"{Request.Scheme}://{Request.Host}/api/tickets";
 
@@ -28,12 +29,14 @@ public class TicketsController : ControllerBase
         IDataPortal<TicketList> ticketListPortal,
         IDataPortal<TicketEdit> ticketEditPortal,
         ApiUserContext userContext,
-        IEventPublisher eventPublisher)
+        IEventPublisher eventPublisher,
+        ILogger<TicketsController> logger)
     {
         _ticketListPortal = ticketListPortal;
         _ticketEditPortal = ticketEditPortal;
         _userContext = userContext;
         _eventPublisher = eventPublisher;
+        _logger = logger;
     }
 
     /// <summary>
@@ -364,18 +367,26 @@ public class TicketsController : ControllerBase
 
             if (eventType != null)
             {
-                await _eventPublisher.PublishAsync(new TicketEvent
+                try
                 {
-                    EventType = eventType,
-                    Payload = new TicketEventPayload
+                    await _eventPublisher.PublishAsync(new TicketEvent
                     {
-                        TicketId = ticket.TicketId,
-                        Title = ticket.Title,
-                        Status = ticket.Status.ToString(),
-                        AssignedQueue = ticket.AssignedQueue?.ToString(),
-                        ChangedBy = _userContext.CurrentUserId
-                    }
-                });
+                        EventType = eventType,
+                        Payload = new TicketEventPayload
+                        {
+                            TicketId = ticket.TicketId,
+                            Title = ticket.Title,
+                            Status = ticket.Status.ToString(),
+                            AssignedQueue = ticket.AssignedQueue?.ToString(),
+                            ChangedBy = _userContext.CurrentUserId
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to publish {EventType} event for ticket {TicketId}. Startup scan will recover.",
+                        eventType, ticket.TicketId);
+                }
             }
 
             // Parent-child cascade: when a child ticket is closed, check if parent should auto-close
@@ -415,17 +426,25 @@ public class TicketsController : ControllerBase
             parent.ResolutionNotes = (parent.ResolutionNotes ?? "") + "\n\nAuto-closed: all child tickets resolved.";
             parent = await parent.SaveAsync();
 
-            await _eventPublisher.PublishAsync(new TicketEvent
+            try
             {
-                EventType = TicketEventTypes.TicketClosed,
-                Payload = new TicketEventPayload
+                await _eventPublisher.PublishAsync(new TicketEvent
                 {
-                    TicketId = parent.TicketId,
-                    Title = parent.Title,
-                    Status = "Closed",
-                    ChangedBy = "system"
-                }
-            });
+                    EventType = TicketEventTypes.TicketClosed,
+                    Payload = new TicketEventPayload
+                    {
+                        TicketId = parent.TicketId,
+                        Title = parent.Title,
+                        Status = "Closed",
+                        ChangedBy = "system"
+                    }
+                });
+            }
+            catch (Exception pubEx)
+            {
+                _logger.LogError(pubEx, "Failed to publish {EventType} event for ticket {TicketId}. Startup scan will recover.",
+                    TicketEventTypes.TicketClosed, parent.TicketId);
+            }
         }
         catch (Exception)
         {

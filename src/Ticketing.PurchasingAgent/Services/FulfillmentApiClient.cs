@@ -29,10 +29,19 @@ public class FulfillmentApiClient
             "Requesting quote for ticket {TicketId} with {ItemCount} items",
             request.TicketId, request.Items.Count);
 
-        var response = await _httpClient.PostAsJsonAsync("/api/fulfillment/quote", request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            var response = await _httpClient.PostAsJsonAsync("/api/fulfillment/quote", request, cancellationToken);
+            response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<QuoteResponse>(cancellationToken)
-            ?? throw new InvalidOperationException("Failed to deserialize quote response");
+            return await response.Content.ReadFromJsonAsync<QuoteResponse>(cancellationToken)
+                ?? throw new InvalidOperationException("Failed to deserialize quote response");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Fulfillment API quote request failed for ticket {TicketId} (StatusCode: {StatusCode})",
+                request.TicketId, ex.StatusCode);
+            throw;
+        }
     }
 }

@@ -83,17 +83,25 @@ public class VendorCallbackController : ControllerBase
                 deliveryTicket.TicketId, request.TicketId);
 
             // Publish fulfilled event
-            await _eventPublisher.PublishAsync(new TicketEvent
+            try
             {
-                EventType = TicketEventTypes.TicketFulfilled,
-                Payload = new TicketEventPayload
+                await _eventPublisher.PublishAsync(new TicketEvent
                 {
-                    TicketId = request.TicketId,
-                    Title = ticket.Title,
-                    Status = "Fulfilled",
-                    ChangedBy = "vendor-callback"
-                }
-            });
+                    EventType = TicketEventTypes.TicketFulfilled,
+                    Payload = new TicketEventPayload
+                    {
+                        TicketId = request.TicketId,
+                        Title = ticket.Title,
+                        Status = "Fulfilled",
+                        ChangedBy = "vendor-callback"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to publish {EventType} event for ticket {TicketId}. Startup scan will recover.",
+                    TicketEventTypes.TicketFulfilled, request.TicketId);
+            }
         }
         else if (string.Equals(request.Status, "unfulfillable", StringComparison.OrdinalIgnoreCase))
         {
@@ -110,21 +118,38 @@ public class VendorCallbackController : ControllerBase
             _logger.LogInformation(
                 "Ticket {TicketId} reassigned to Purchasing (vendor unfulfillable)", request.TicketId);
 
-            await _eventPublisher.PublishAsync(new TicketEvent
+            var attemptCount = CountFulfillmentAttempts(ticket.TriageNotes);
+
+            try
             {
-                EventType = TicketEventTypes.TicketAssigned,
-                Payload = new TicketEventPayload
+                await _eventPublisher.PublishAsync(new TicketEvent
                 {
-                    TicketId = request.TicketId,
-                    Title = ticket.Title,
-                    Status = "InProgress",
-                    AssignedQueue = "Purchasing",
-                    ChangedBy = "vendor-callback"
-                }
-            });
+                    EventType = TicketEventTypes.TicketAssigned,
+                    Payload = new TicketEventPayload
+                    {
+                        TicketId = request.TicketId,
+                        Title = ticket.Title,
+                        Status = "InProgress",
+                        AssignedQueue = "Purchasing",
+                        ChangedBy = "vendor-callback",
+                        AttemptCount = attemptCount + 1
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to publish {EventType} event for ticket {TicketId}. Startup scan will recover.",
+                    TicketEventTypes.TicketAssigned, request.TicketId);
+            }
         }
 
         return Ok();
+    }
+
+    private static int CountFulfillmentAttempts(string? triageNotes)
+    {
+        if (string.IsNullOrEmpty(triageNotes)) return 0;
+        return triageNotes.Split("--- Vendor Fulfillment Failed").Length - 1;
     }
 }
 

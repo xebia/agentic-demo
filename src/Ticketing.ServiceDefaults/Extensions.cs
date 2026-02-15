@@ -40,12 +40,14 @@ public static class Extensions
             {
                 metrics.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
-                    .AddRuntimeInstrumentation();
+                    .AddRuntimeInstrumentation()
+                    .AddMeter("Ticketing.Agents");
             })
             .WithTracing(tracing =>
             {
                 tracing.AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation();
+                    .AddHttpClientInstrumentation()
+                    .AddSource("Ticketing.Agents");
             });
 
         builder.AddOpenTelemetryExporters();

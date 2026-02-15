@@ -27,21 +27,39 @@ public class VendorApiClient
     {
         _logger.LogInformation("Searching vendor catalog for: {Query}", query);
 
-        var products = await _httpClient.GetFromJsonAsync<List<VendorProduct>>(
-            $"/api/catalog/search?query={Uri.EscapeDataString(query)}",
-            cancellationToken);
+        try
+        {
+            var products = await _httpClient.GetFromJsonAsync<List<VendorProduct>>(
+                $"/api/catalog/search?query={Uri.EscapeDataString(query)}",
+                cancellationToken);
 
-        return products ?? [];
+            return products ?? [];
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Vendor API catalog search failed for query '{Query}' (StatusCode: {StatusCode})",
+                query, ex.StatusCode);
+            throw;
+        }
     }
 
     public async Task<VendorOrderResponse> SubmitOrderAsync(VendorOrderRequest request, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Submitting order to vendor for ticket {TicketId}", request.TicketId);
 
-        var response = await _httpClient.PostAsJsonAsync("/api/orders", request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            var response = await _httpClient.PostAsJsonAsync("/api/orders", request, cancellationToken);
+            response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<VendorOrderResponse>(cancellationToken)
-            ?? throw new InvalidOperationException("Failed to deserialize vendor order response");
+            return await response.Content.ReadFromJsonAsync<VendorOrderResponse>(cancellationToken)
+                ?? throw new InvalidOperationException("Failed to deserialize vendor order response");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Vendor API order submission failed for ticket {TicketId} (StatusCode: {StatusCode})",
+                request.TicketId, ex.StatusCode);
+            throw;
+        }
     }
 }

@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
+using Ticketing.Messaging.Abstractions.Diagnostics;
 using Ticketing.TriageAgent.Models;
 
 namespace Ticketing.TriageAgent.Services;
@@ -93,67 +95,100 @@ public class AzureOpenAITriageService : ITriageService
     {
         _logger.LogInformation("Triaging ticket {TicketId}: {Title}", ticket.TicketId, ticket.Title);
 
-        var userMessage = $"""
-            Ticket ID: {ticket.TicketId}
-            Type: {ticket.TicketType}
-            Title: {ticket.Title}
-            Description: {ticket.Description ?? "(no description)"}
-            Current Priority: {ticket.Priority}
-            Current Category: {ticket.Category ?? "(not set)"}
-            Created By: {ticket.CreatedByName ?? ticket.CreatedBy}
-            """;
+        using var activity = TicketingTelemetry.Source.StartActivity("openai.chat.completion");
+        activity?.SetTag("ticket.id", ticket.TicketId);
+        activity?.SetTag("agent", "triage");
+        var sw = Stopwatch.StartNew();
 
-        var options = new ChatCompletionOptions
+        try
         {
-            Temperature = 0.1f,
-            ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
-                "triage_decision",
-                BinaryData.FromString("""
-                    {
-                        "type": "object",
-                        "properties": {
-                            "queue": {
-                                "type": "string",
-                                "enum": ["Helpdesk", "Purchasing"]
+            var userMessage = $"""
+                Ticket ID: {ticket.TicketId}
+                Type: {ticket.TicketType}
+                Title: {ticket.Title}
+                Description: {ticket.Description ?? "(no description)"}
+                Current Priority: {ticket.Priority}
+                Current Category: {ticket.Category ?? "(not set)"}
+                Created By: {ticket.CreatedByName ?? ticket.CreatedBy}
+                """;
+
+            var options = new ChatCompletionOptions
+            {
+                Temperature = 0.1f,
+                ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
+                    "triage_decision",
+                    BinaryData.FromString("""
+                        {
+                            "type": "object",
+                            "properties": {
+                                "queue": {
+                                    "type": "string",
+                                    "enum": ["Helpdesk", "Purchasing"]
+                                },
+                                "priority": {
+                                    "type": "string",
+                                    "enum": ["Low", "Medium", "High", "Critical"]
+                                },
+                                "category": {
+                                    "type": "string",
+                                    "enum": ["Hardware", "Software", "Network", "Access", "Other"]
+                                },
+                                "reasoning": {
+                                    "type": "string"
+                                }
                             },
-                            "priority": {
-                                "type": "string",
-                                "enum": ["Low", "Medium", "High", "Critical"]
-                            },
-                            "category": {
-                                "type": "string",
-                                "enum": ["Hardware", "Software", "Network", "Access", "Other"]
-                            },
-                            "reasoning": {
-                                "type": "string"
-                            }
-                        },
-                        "required": ["queue", "priority", "category", "reasoning"],
-                        "additionalProperties": false
-                    }
-                    """),
-                jsonSchemaIsStrict: true)
-        };
+                            "required": ["queue", "priority", "category", "reasoning"],
+                            "additionalProperties": false
+                        }
+                        """),
+                    jsonSchemaIsStrict: true)
+            };
 
-        var completion = await _chatClient.CompleteChatAsync(
-            [
-                new SystemChatMessage(SystemPrompt),
-                new UserChatMessage(userMessage)
-            ],
-            options,
-            cancellationToken);
+            var completion = await _chatClient.CompleteChatAsync(
+                [
+                    new SystemChatMessage(SystemPrompt),
+                    new UserChatMessage(userMessage)
+                ],
+                options,
+                cancellationToken);
 
-        var responseText = completion.Value.Content[0].Text;
+            sw.Stop();
+            var usage = completion.Value.Usage;
+            activity?.SetTag("llm.model", completion.Value.Model);
+            activity?.SetTag("llm.input_tokens", usage.InputTokenCount);
+            activity?.SetTag("llm.output_tokens", usage.OutputTokenCount);
 
-        _logger.LogDebug("LLM response for {TicketId}: {Response}", ticket.TicketId, responseText);
+            TicketingTelemetry.LlmCalls.Add(1, new KeyValuePair<string, object?>("agent", "triage"), new KeyValuePair<string, object?>("status", "success"));
+            TicketingTelemetry.LlmDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("agent", "triage"));
+            TicketingTelemetry.LlmTokens.Add(usage.InputTokenCount, new KeyValuePair<string, object?>("agent", "triage"), new KeyValuePair<string, object?>("type", "input"));
+            TicketingTelemetry.LlmTokens.Add(usage.OutputTokenCount, new KeyValuePair<string, object?>("agent", "triage"), new KeyValuePair<string, object?>("type", "output"));
 
-        var decision = JsonSerializer.Deserialize<TriageDecision>(responseText, JsonOptions)
-            ?? throw new InvalidOperationException($"Failed to deserialize triage decision for ticket {ticket.TicketId}");
+            var responseText = completion.Value.Content[0].Text;
 
-        _logger.LogInformation(
-            "Triage decision for {TicketId}: Queue={Queue}, Priority={Priority}, Category={Category}",
-            ticket.TicketId, decision.Queue, decision.Priority, decision.Category);
+            _logger.LogDebug("LLM response for {TicketId}: {Response}", ticket.TicketId, responseText);
 
-        return decision;
+            var decision = JsonSerializer.Deserialize<TriageDecision>(responseText, JsonOptions)
+                ?? throw new InvalidOperationException($"Failed to deserialize triage decision for ticket {ticket.TicketId}");
+
+            _logger.LogInformation(
+                "Triage decision for {TicketId}: Queue={Queue}, Priority={Priority}, Category={Category}",
+                ticket.TicketId, decision.Queue, decision.Priority, decision.Category);
+
+            return decision;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            sw.Stop();
+            TicketingTelemetry.LlmCalls.Add(1, new KeyValuePair<string, object?>("agent", "triage"), new KeyValuePair<string, object?>("status", "transient_error"));
+            _logger.LogWarning(ex, "Transient LLM error triaging ticket {TicketId}", ticket.TicketId);
+            throw;
+        }
+        catch (JsonException ex)
+        {
+            sw.Stop();
+            TicketingTelemetry.LlmCalls.Add(1, new KeyValuePair<string, object?>("agent", "triage"), new KeyValuePair<string, object?>("status", "parse_error"));
+            _logger.LogError(ex, "Failed to parse LLM response for ticket {TicketId}", ticket.TicketId);
+            throw;
+        }
     }
 }
