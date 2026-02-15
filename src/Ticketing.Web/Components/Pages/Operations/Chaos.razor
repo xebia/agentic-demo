@@ -1,0 +1,184 @@
+@page "/operations/chaos"
+@rendermode InteractiveServer
+@using Azure.Messaging.ServiceBus
+@using Microsoft.EntityFrameworkCore
+@using Ticketing.DataAccess
+@using Ticketing.Web.Services
+
+<PageTitle>Chaos Testing</PageTitle>
+
+<h1 class="mb-4">Chaos Testing</h1>
+<p class="text-muted mb-4">Inject faults to test agent resilience and operations monitoring.</p>
+
+<div class="row g-4">
+    @* Card 1 — Poison DLQ *@
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-radioactive"></i> Poison DLQ</h5>
+                <p class="card-text">Send a malformed message to the Service Bus topic. Agents will fail to deserialize it, sending it to their dead-letter queue.</p>
+                <div class="mb-3">
+                    <label class="form-label">Target subscription</label>
+                    <select class="form-select" @bind="_selectedSubscription">
+                        <option value="triage-agent-subscription">Triage Agent</option>
+                        <option value="purchasing-agent-subscription">Purchasing Agent</option>
+                        <option value="fulfillment-agent-subscription">Fulfillment Agent</option>
+                        <option value="operations-agent-subscription">Operations Agent</option>
+                    </select>
+                </div>
+                <button class="btn btn-danger" @onclick="PoisonDlq" disabled="@_poisonInProgress">
+                    @if (_poisonInProgress)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                    }
+                    Poison
+                </button>
+                @if (_poisonMessage is not null)
+                {
+                    <div class="alert alert-@(_poisonSuccess ? "success" : "danger") mt-3 mb-0">@_poisonMessage</div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* Card 2 — Stuck Ticket *@
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-clock-history"></i> Stuck Ticket</h5>
+                <p class="card-text">Create a ticket and backdate it by 2 hours so it appears stuck, triggering SLA violation detection.</p>
+                <button class="btn btn-warning" @onclick="CreateStuckTicket" disabled="@_stuckInProgress">
+                    @if (_stuckInProgress)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                    }
+                    Create Stuck Ticket
+                </button>
+                @if (_stuckMessage is not null)
+                {
+                    <div class="alert alert-@(_stuckSuccess ? "success" : "danger") mt-3 mb-0">@_stuckMessage</div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* Card 3 — Service Degradation *@
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-heartbreak"></i> Service Degradation</h5>
+                <p class="card-text">Toggle health check degradation. The OperationsAgent's health scan will detect this and raise an alert.</p>
+                <div class="d-flex align-items-center gap-3">
+                    <button class="btn @(ChaosState.IsHealthDegraded ? "btn-success" : "btn-outline-danger")" @onclick="ToggleDegradation">
+                        @(ChaosState.IsHealthDegraded ? "Restore Service" : "Degrade Service")
+                    </button>
+                    <span class="badge bg-@(ChaosState.IsHealthDegraded ? "danger" : "success") fs-6">
+                        @(ChaosState.IsHealthDegraded ? "DEGRADED" : "HEALTHY")
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Inject] private IConfiguration Configuration { get; set; } = null!;
+    [Inject] private IDataPortal<TicketEdit> TicketEditPortal { get; set; } = null!;
+    [Inject] private TicketingDbContext DbContext { get; set; } = null!;
+    [Inject] private ILogger<Chaos> Logger { get; set; } = null!;
+
+    private string _selectedSubscription = "triage-agent-subscription";
+
+    private bool _poisonInProgress;
+    private string? _poisonMessage;
+    private bool _poisonSuccess;
+
+    private bool _stuckInProgress;
+    private string? _stuckMessage;
+    private bool _stuckSuccess;
+
+    private async Task PoisonDlq()
+    {
+        _poisonInProgress = true;
+        _poisonMessage = null;
+        try
+        {
+            var connectionString = Configuration["ServiceBus:ConnectionString"];
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                _poisonMessage = "ServiceBus connection string is not configured. Run with Aspire to enable.";
+                _poisonSuccess = false;
+                return;
+            }
+
+            await using var client = new ServiceBusClient(connectionString);
+            await using var sender = client.CreateSender("tickets.events");
+
+            var message = new ServiceBusMessage("THIS_IS_NOT_VALID_JSON_{{{{POISON}}}}")
+            {
+                Subject = "ticket.created",
+                ContentType = "application/json",
+                MessageId = Guid.NewGuid().ToString()
+            };
+
+            await sender.SendMessageAsync(message);
+            _poisonMessage = $"Poison message sent to tickets.events topic (target: {_selectedSubscription}).";
+            _poisonSuccess = true;
+            Logger.LogWarning("Chaos: Sent poison DLQ message targeting {Subscription}", _selectedSubscription);
+        }
+        catch (Exception ex)
+        {
+            _poisonMessage = $"Failed: {ex.Message}";
+            _poisonSuccess = false;
+            Logger.LogError(ex, "Chaos: Failed to send poison message");
+        }
+        finally
+        {
+            _poisonInProgress = false;
+        }
+    }
+
+    private async Task CreateStuckTicket()
+    {
+        _stuckInProgress = true;
+        _stuckMessage = null;
+        try
+        {
+            var ticket = await TicketEditPortal.CreateAsync("chaos-testing", "Chaos Tester");
+            ticket.Title = "[CHAOS] Stuck ticket for SLA testing";
+            ticket.Description = "This ticket was created by chaos testing and backdated to trigger SLA violation detection.";
+            ticket.TicketTypeValue = TicketType.Support;
+            ticket.Priority = TicketPriority.High;
+            ticket = await TicketEditPortal.UpdateAsync(ticket);
+
+            // Backdate the ticket directly in DB
+            var entity = await DbContext.Tickets.FindAsync(ticket.TicketId);
+            if (entity is not null)
+            {
+                entity.CreatedAt = DateTime.UtcNow.AddHours(-2);
+                entity.UpdatedAt = DateTime.UtcNow.AddHours(-2);
+                await DbContext.SaveChangesAsync();
+            }
+
+            _stuckMessage = $"Stuck ticket {ticket.TicketId} created and backdated by 2 hours.";
+            _stuckSuccess = true;
+            Logger.LogWarning("Chaos: Created stuck ticket {TicketId}", ticket.TicketId);
+        }
+        catch (Exception ex)
+        {
+            _stuckMessage = $"Failed: {ex.Message}";
+            _stuckSuccess = false;
+            Logger.LogError(ex, "Chaos: Failed to create stuck ticket");
+        }
+        finally
+        {
+            _stuckInProgress = false;
+        }
+    }
+
+    private void ToggleDegradation()
+    {
+        ChaosState.IsHealthDegraded = !ChaosState.IsHealthDegraded;
+        Logger.LogWarning("Chaos: Health degradation toggled to {State}", ChaosState.IsHealthDegraded);
+    }
+}

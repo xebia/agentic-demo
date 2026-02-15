@@ -1,0 +1,16 @@
+{
+  "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Ticketing.OperationsAgent": "Information"
+    }
+  },
+  "extensions": {
+    "serviceBus": {
+      "maxConcurrentCalls": 5,
+      "autoCompleteMessages": false,
+      "maxAutoLockRenewalDuration": "00:05:00"
+    }
+  }
+}

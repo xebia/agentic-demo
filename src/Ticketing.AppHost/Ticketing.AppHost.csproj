@@ -26,6 +26,7 @@
     <ProjectReference Include="..\Ticketing.PurchasingAgent\Ticketing.PurchasingAgent.csproj" />
     <ProjectReference Include="..\Ticketing.FulfillmentAgent\Ticketing.FulfillmentAgent.csproj" />
     <ProjectReference Include="..\Ticketing.VendorMock\Ticketing.VendorMock.csproj" />
+    <ProjectReference Include="..\Ticketing.OperationsAgent\Ticketing.OperationsAgent.csproj" />
   </ItemGroup>
 
 </Project>

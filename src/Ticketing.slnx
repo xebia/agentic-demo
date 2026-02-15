@@ -13,4 +13,5 @@
   <Project Path="Ticketing.PurchasingAgent/Ticketing.PurchasingAgent.csproj" />
   <Project Path="Ticketing.FulfillmentAgent/Ticketing.FulfillmentAgent.csproj" />
   <Project Path="Ticketing.VendorMock/Ticketing.VendorMock.csproj" />
+  <Project Path="Ticketing.OperationsAgent/Ticketing.OperationsAgent.csproj" />
 </Solution>

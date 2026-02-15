@@ -1,0 +1,32 @@
+@rendermode InteractiveServer
+@implements IDisposable
+@using Ticketing.Web.Services
+
+@if (_count > 0)
+{
+    <span class="badge bg-danger rounded-pill">@_count</span>
+}
+
+@code {
+    [Inject]
+    private IAlertService AlertService { get; set; } = null!;
+
+    private int _count;
+
+    protected override void OnInitialized()
+    {
+        _count = AlertService.UnacknowledgedCount;
+        AlertService.OnAlertsChanged += OnAlertsChanged;
+    }
+
+    private void OnAlertsChanged()
+    {
+        _count = AlertService.UnacknowledgedCount;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        AlertService.OnAlertsChanged -= OnAlertsChanged;
+    }
+}
