@@ -122,18 +122,34 @@ public class OrderProcessor : BackgroundService
             }).ToList()
         };
 
-        try
+        const int maxRetries = 3;
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
-            var client = _httpClientFactory.CreateClient("CallbackClient");
-            var response = await client.PostAsJsonAsync(order.CallbackUrl, callback, cancellationToken);
-            _logger.LogInformation(
-                "Callback sent for order {OrderId}: {StatusCode}",
-                order.OrderId, response.StatusCode);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send callback for order {OrderId} to {CallbackUrl}",
-                order.OrderId, order.CallbackUrl);
+            try
+            {
+                var client = _httpClientFactory.CreateClient("CallbackClient");
+                var response = await client.PostAsJsonAsync(order.CallbackUrl, callback, cancellationToken);
+                _logger.LogInformation(
+                    "Callback sent for order {OrderId}: {StatusCode}",
+                    order.OrderId, response.StatusCode);
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (attempt == maxRetries)
+                {
+                    _logger.LogCritical(ex,
+                        "All {MaxRetries} callback attempts failed for order {OrderId} to {CallbackUrl}. Ticket {TicketId} may be stranded.",
+                        maxRetries, order.OrderId, order.CallbackUrl, order.TicketId);
+                }
+                else
+                {
+                    _logger.LogWarning(ex,
+                        "Callback attempt {Attempt}/{MaxRetries} failed for order {OrderId}, retrying in 5s",
+                        attempt, maxRetries, order.OrderId);
+                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                }
+            }
         }
     }
 }

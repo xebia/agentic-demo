@@ -3,6 +3,7 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Ticketing.Messaging.Abstractions;
+using Ticketing.Messaging.Abstractions.Diagnostics;
 
 namespace Ticketing.Messaging.ServiceBus;
 
@@ -42,13 +43,24 @@ public class ServiceBusEventPublisher : IEventPublisher, IAsyncDisposable
             CorrelationId = ticketEvent.CorrelationId
         };
 
-        await _sender.SendMessageAsync(message, cancellationToken);
+        try
+        {
+            await _sender.SendMessageAsync(message, cancellationToken);
+            TicketingTelemetry.EventsPublished.Add(1, new KeyValuePair<string, object?>("event_type", ticketEvent.EventType));
 
-        _logger.LogInformation(
-            "Published {EventType} event for ticket {TicketId} (MessageId: {MessageId})",
-            ticketEvent.EventType,
-            ticketEvent.Payload.TicketId,
-            ticketEvent.EventId);
+            _logger.LogInformation(
+                "Published {EventType} event for ticket {TicketId} (MessageId: {MessageId})",
+                ticketEvent.EventType,
+                ticketEvent.Payload.TicketId,
+                ticketEvent.EventId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to publish {EventType} event for ticket {TicketId}. Payload: {Payload}",
+                ticketEvent.EventType, ticketEvent.Payload.TicketId, body);
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()

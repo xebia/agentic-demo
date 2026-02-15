@@ -15,4 +15,5 @@ public class TicketEventPayload
     public string? Category { get; set; }
     public string? CreatedBy { get; set; }
     public string? ChangedBy { get; set; }
+    public int AttemptCount { get; set; }
 }

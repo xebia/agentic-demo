@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Ticketing.Messaging.Abstractions;
+using Ticketing.Messaging.Abstractions.Diagnostics;
 using Ticketing.PurchasingAgent.Models;
 using Ticketing.PurchasingAgent.Services;
 
@@ -47,6 +49,7 @@ public class PurchasingFunction
         [ServiceBusTrigger("tickets.events", "purchasing-agent-subscription",
             Connection = "ServiceBusConnection")]
         ServiceBusReceivedMessage message,
+        ServiceBusMessageActions messageActions,
         CancellationToken cancellationToken)
     {
         _logger.LogInformation(
@@ -60,31 +63,67 @@ public class PurchasingFunction
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Failed to deserialize message body");
+            _logger.LogError(ex, "Failed to deserialize message body: {Body}", message.Body.ToString());
+            await messageActions.DeadLetterMessageAsync(message, deadLetterReason: "DeserializationFailed", deadLetterErrorDescription: ex.Message);
             return;
         }
 
         if (ticketEvent?.Payload?.TicketId == null)
         {
-            _logger.LogWarning("Message has no ticket ID in payload, skipping");
+            _logger.LogWarning("Message has no ticket ID in payload, dead-lettering: {Body}", message.Body.ToString());
+            await messageActions.DeadLetterMessageAsync(message, deadLetterReason: "MissingTicketId", deadLetterErrorDescription: "No ticket ID in payload");
             return;
         }
 
-        switch (message.Subject)
+        using var activity = TicketingTelemetry.Source.StartActivity("purchasing.process");
+        activity?.SetTag("ticket.id", ticketEvent.Payload.TicketId);
+        var sw = Stopwatch.StartNew();
+        try
         {
-            case TicketEventTypes.TicketAssigned
-                when string.Equals(ticketEvent.Payload.AssignedQueue, "Purchasing", StringComparison.OrdinalIgnoreCase):
-                await ProcessPurchaseTicketByIdAsync(ticketEvent.Payload.TicketId, cancellationToken);
-                break;
+            switch (message.Subject)
+            {
+                case TicketEventTypes.TicketAssigned
+                    when string.Equals(ticketEvent.Payload.AssignedQueue, "Purchasing", StringComparison.OrdinalIgnoreCase):
+                    await ProcessPurchaseTicketByIdAsync(ticketEvent.Payload.TicketId, cancellationToken);
+                    break;
 
-            case TicketEventTypes.TicketApproved:
-                await TransitionToFulfillmentAsync(ticketEvent.Payload.TicketId, cancellationToken);
-                break;
+                case TicketEventTypes.TicketApproved:
+                    await TransitionToFulfillmentAsync(ticketEvent.Payload.TicketId, cancellationToken);
+                    break;
 
-            default:
-                _logger.LogDebug("Ignoring event {Subject} for ticket {TicketId}",
-                    message.Subject, ticketEvent.Payload.TicketId);
-                break;
+                default:
+                    _logger.LogDebug("Ignoring event {Subject} for ticket {TicketId}",
+                        message.Subject, ticketEvent.Payload.TicketId);
+                    break;
+            }
+
+            await messageActions.CompleteMessageAsync(message);
+            TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "purchasing"), new KeyValuePair<string, object?>("outcome", "success"));
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            _logger.LogWarning(ex, "Transient error processing ticket {TicketId}, will retry", ticketEvent.Payload.TicketId);
+            TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "purchasing"), new KeyValuePair<string, object?>("outcome", "transient_error"));
+            throw; // Let Service Bus retry
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process ticket {TicketId} (delivery {DeliveryCount})", ticketEvent.Payload.TicketId, message.DeliveryCount);
+            if (message.DeliveryCount >= 5)
+            {
+                await messageActions.DeadLetterMessageAsync(message, deadLetterReason: "ProcessingFailed", deadLetterErrorDescription: ex.Message);
+                TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "purchasing"), new KeyValuePair<string, object?>("outcome", "dead_lettered"));
+            }
+            else
+            {
+                TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "purchasing"), new KeyValuePair<string, object?>("outcome", "failed"));
+                throw; // Retry
+            }
+        }
+        finally
+        {
+            sw.Stop();
+            TicketingTelemetry.ProcessingDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("agent", "purchasing"));
         }
     }
 
@@ -106,6 +145,21 @@ public class PurchasingFunction
             _logger.LogInformation(
                 "Ticket {TicketId} is in status {Status} (not Triaged), skipping",
                 ticketId, ticket.Status);
+            return;
+        }
+
+        // 2a. Cascade loop protection: escalate to human review after repeated fulfillment failures
+        var fulfillmentFailures = ticket.TriageNotes?.Split("--- Vendor Fulfillment Failed").Length - 1 ?? 0;
+        if (fulfillmentFailures >= 3)
+        {
+            _logger.LogWarning("Ticket {TicketId} has failed fulfillment {Count} times, escalating to human review",
+                ticketId, fulfillmentFailures);
+            await _apiClient.UpdateTicketAsync(ticketId, new UpdateTicketRequest
+            {
+                Status = "InProgress",
+                AssignedQueue = "Helpdesk",
+                TriageNotes = (ticket.TriageNotes ?? "") + $"\n\n--- Escalation ({DateTime.UtcNow:u}) ---\nAutomatic escalation: ticket has failed vendor fulfillment {fulfillmentFailures} times. Requires human review to resolve."
+            }, cancellationToken);
             return;
         }
 

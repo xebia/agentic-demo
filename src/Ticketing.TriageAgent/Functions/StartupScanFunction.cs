@@ -29,6 +29,9 @@ public class StartupScanFunction
         [TimerTrigger("0 0 */12 * * *", RunOnStartup = true)] TimerInfo timerInfo,
         CancellationToken cancellationToken)
     {
+        // Add jitter to prevent thundering herd when all agents scan simultaneously
+        await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, 60)), cancellationToken);
+
         _logger.LogInformation("Starting scan for untriaged tickets");
 
         var newTickets = await _apiClient.GetNewTicketsAsync(cancellationToken);

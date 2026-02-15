@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Ticketing.FulfillmentAgent.Models;
 using Ticketing.FulfillmentAgent.Services;
 using Ticketing.Messaging.Abstractions;
+using Ticketing.Messaging.Abstractions.Diagnostics;
 
 namespace Ticketing.FulfillmentAgent.Functions;
 
@@ -41,6 +43,7 @@ public class FulfillmentFunction
         [ServiceBusTrigger("tickets.events", "fulfillment-agent-subscription",
             Connection = "ServiceBusConnection")]
         ServiceBusReceivedMessage message,
+        ServiceBusMessageActions messageActions,
         CancellationToken cancellationToken)
     {
         _logger.LogInformation(
@@ -51,6 +54,7 @@ public class FulfillmentFunction
         if (message.Subject != TicketEventTypes.TicketFulfillmentRequested)
         {
             _logger.LogDebug("Ignoring event type {Subject}", message.Subject);
+            await messageActions.CompleteMessageAsync(message);
             return;
         }
 
@@ -61,17 +65,52 @@ public class FulfillmentFunction
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Failed to deserialize message body");
+            _logger.LogError(ex, "Failed to deserialize message body: {Body}", message.Body.ToString());
+            await messageActions.DeadLetterMessageAsync(message, deadLetterReason: "DeserializationFailed", deadLetterErrorDescription: ex.Message);
             return;
         }
 
         if (ticketEvent?.Payload?.TicketId == null)
         {
-            _logger.LogWarning("Message has no ticket ID in payload, skipping");
+            _logger.LogWarning("Message has no ticket ID in payload, dead-lettering: {Body}", message.Body.ToString());
+            await messageActions.DeadLetterMessageAsync(message, deadLetterReason: "MissingTicketId", deadLetterErrorDescription: "No ticket ID in payload");
             return;
         }
 
-        await FulfillTicketByIdAsync(ticketEvent.Payload.TicketId, cancellationToken);
+        using var activity = TicketingTelemetry.Source.StartActivity("fulfillment.process");
+        activity?.SetTag("ticket.id", ticketEvent.Payload.TicketId);
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await FulfillTicketByIdAsync(ticketEvent.Payload.TicketId, cancellationToken);
+            await messageActions.CompleteMessageAsync(message);
+            TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "fulfillment"), new KeyValuePair<string, object?>("outcome", "success"));
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            _logger.LogWarning(ex, "Transient error processing ticket {TicketId}, will retry", ticketEvent.Payload.TicketId);
+            TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "fulfillment"), new KeyValuePair<string, object?>("outcome", "transient_error"));
+            throw; // Let Service Bus retry
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process ticket {TicketId} (delivery {DeliveryCount})", ticketEvent.Payload.TicketId, message.DeliveryCount);
+            if (message.DeliveryCount >= 5)
+            {
+                await messageActions.DeadLetterMessageAsync(message, deadLetterReason: "ProcessingFailed", deadLetterErrorDescription: ex.Message);
+                TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "fulfillment"), new KeyValuePair<string, object?>("outcome", "dead_lettered"));
+            }
+            else
+            {
+                TicketingTelemetry.EventsProcessed.Add(1, new KeyValuePair<string, object?>("agent", "fulfillment"), new KeyValuePair<string, object?>("outcome", "failed"));
+                throw; // Retry
+            }
+        }
+        finally
+        {
+            sw.Stop();
+            TicketingTelemetry.ProcessingDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("agent", "fulfillment"));
+        }
     }
 
     internal async Task FulfillTicketByIdAsync(string ticketId, CancellationToken cancellationToken)
