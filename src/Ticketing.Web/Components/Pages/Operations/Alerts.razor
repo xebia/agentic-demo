@@ -1,0 +1,84 @@
+@page "/operations"
+@rendermode InteractiveServer
+@implements IDisposable
+@using Ticketing.Web.Services
+
+<PageTitle>Operations Alerts</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Operations Alerts</h1>
+</div>
+
+@if (_alerts.Count == 0 || _alerts.All(a => a.IsAcknowledged))
+{
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i> All systems operational — no unacknowledged alerts.
+    </div>
+}
+
+@foreach (var alert in _alerts)
+{
+    <div class="card mb-3 @(alert.IsAcknowledged ? "opacity-50" : "")">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <span class="badge bg-@SeverityColor(alert.Severity) me-2">@alert.Severity</span>
+                    <strong>@alert.Title</strong>
+                    <span class="text-muted ms-2">@alert.Timestamp.ToString("g") UTC</span>
+                    <span class="badge bg-secondary ms-2">@alert.Source</span>
+                </div>
+                @if (!alert.IsAcknowledged)
+                {
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => Acknowledge(alert.Id)">
+                        Acknowledge
+                    </button>
+                }
+                else
+                {
+                    <span class="badge bg-light text-dark">Acknowledged</span>
+                }
+            </div>
+            <p class="mt-2 mb-1">@alert.Description</p>
+            @if (!string.IsNullOrEmpty(alert.Remediation))
+            {
+                <p class="text-info mb-0"><i class="bi bi-lightbulb"></i> @alert.Remediation</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Inject]
+    private IAlertService AlertService { get; set; } = null!;
+
+    private IReadOnlyList<OperationsAlertDto> _alerts = [];
+
+    protected override void OnInitialized()
+    {
+        _alerts = AlertService.Alerts;
+        AlertService.OnAlertsChanged += OnAlertsChanged;
+    }
+
+    private void OnAlertsChanged()
+    {
+        _alerts = AlertService.Alerts;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void Acknowledge(string alertId)
+    {
+        AlertService.AcknowledgeAlert(alertId);
+    }
+
+    private static string SeverityColor(string severity) => severity switch
+    {
+        "Critical" => "danger",
+        "Warning" => "warning",
+        _ => "info"
+    };
+
+    public void Dispose()
+    {
+        AlertService.OnAlertsChanged -= OnAlertsChanged;
+    }
+}

@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AZURE_FUNCTIONS_ENVIRONMENT": "Development",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AuthService:ClientId": "operations-agent",
+    "AuthService:ClientSecret": "secret-for-operations"
+  }
+}

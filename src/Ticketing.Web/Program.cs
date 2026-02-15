@@ -17,6 +17,7 @@ using Ticketing.Web.Components;
 using Ticketing.Web.Mcp;
 using Ticketing.Web.Middleware;
 using Ticketing.Web.OpenApi;
+using Ticketing.Web.Services;
 using Ticketing.Web.Services.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -91,6 +92,14 @@ builder.Services.AddScoped<AuthenticationStateProvider>(sp =>
     sp.GetRequiredService<MockAuthenticationStateProvider>());
 builder.Services.AddScoped<IUserContext, BlazorUserContext>();
 builder.Services.AddCascadingAuthenticationState();
+
+// Add operations alert service and chaos health check
+builder.Services.AddSingleton<IAlertService, AlertService>();
+builder.Services.AddHealthChecks()
+    .AddCheck("chaos-degradation", () =>
+        ChaosState.IsHealthDegraded
+            ? Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Degraded("Chaos testing: service deliberately degraded")
+            : Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
 
 // Add event publishing via Azure Service Bus
 builder.Services.AddServiceBusMessaging(builder.Configuration);

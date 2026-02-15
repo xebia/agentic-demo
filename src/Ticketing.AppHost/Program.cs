@@ -15,6 +15,7 @@ var topic = serviceBus.AddServiceBusTopic("tickets-events", "tickets.events");
 topic.AddServiceBusSubscription("triage-agent-subscription");
 topic.AddServiceBusSubscription("purchasing-agent-subscription");
 topic.AddServiceBusSubscription("fulfillment-agent-subscription");
+topic.AddServiceBusSubscription("operations-agent-subscription");
 
 // Auth service
 var auth = builder.AddProject<Projects.Ticketing_Auth>("auth");
@@ -73,6 +74,17 @@ builder.AddAzureFunctionsProject<Projects.Ticketing_PurchasingAgent>("purchasing
     .WithEnvironment("TicketingApi__BaseUrl", web.GetEndpoint("https"))
     .WithEnvironment("FulfillmentApi__BaseUrl", fulfillmentAgent.GetEndpoint("http"))
     .WaitFor(serviceBus).WaitFor(auth).WaitFor(web).WaitFor(storage).WaitFor(fulfillmentAgent);
+
+// OperationsAgent (Azure Functions worker — health monitoring)
+builder.AddAzureFunctionsProject<Projects.Ticketing_OperationsAgent>("operationsagent")
+    .WithReference(serviceBus)
+    .WithReference(blobs)
+    .WithEnvironment("ServiceBusConnection", serviceBus)
+    .WithEnvironment("ServiceBus__ConnectionString", serviceBus)
+    .WithEnvironment("AuthService__Url", auth.GetEndpoint("https"))
+    .WithEnvironment("TicketingApi__BaseUrl", web.GetEndpoint("https"))
+    .WithEnvironment("VendorApi__BaseUrl", vendorMock.GetEndpoint("https"))
+    .WaitFor(serviceBus).WaitFor(auth).WaitFor(web).WaitFor(storage).WaitFor(vendorMock);
 
 // Vendor Mock needs to call back to Web API
 vendorMock.WithEnvironment("CallbackApi__BaseUrl", web.GetEndpoint("https"));
