@@ -1,0 +1,19 @@
+# Ticketing.Chatbot — AI chatbot Blazor UI
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
+WORKDIR /src
+
+COPY src/Ticketing.Chatbot/Ticketing.Chatbot.csproj Ticketing.Chatbot/
+COPY src/Ticketing.ServiceDefaults/Ticketing.ServiceDefaults.csproj Ticketing.ServiceDefaults/
+RUN dotnet restore Ticketing.Chatbot/Ticketing.Chatbot.csproj
+
+COPY src/Ticketing.Chatbot/ Ticketing.Chatbot/
+COPY src/Ticketing.ServiceDefaults/ Ticketing.ServiceDefaults/
+RUN dotnet publish Ticketing.Chatbot/Ticketing.Chatbot.csproj -c Release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-preview AS runtime
+WORKDIR /app
+COPY --from=build /app .
+ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_ENVIRONMENT=Development
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "Ticketing.Chatbot.dll"]
