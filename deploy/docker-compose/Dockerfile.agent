@@ -1,0 +1,28 @@
+# Shared Dockerfile for Azure Functions agent projects
+# Build arg AGENT_PROJECT selects which agent to build
+ARG AGENT_PROJECT=Ticketing.TriageAgent
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
+ARG AGENT_PROJECT
+WORKDIR /src
+
+# Copy project files for restore (layer caching)
+COPY src/${AGENT_PROJECT}/${AGENT_PROJECT}.csproj ${AGENT_PROJECT}/
+COPY src/Ticketing.ServiceDefaults/Ticketing.ServiceDefaults.csproj Ticketing.ServiceDefaults/
+COPY src/Ticketing.Messaging.Abstractions/Ticketing.Messaging.Abstractions.csproj Ticketing.Messaging.Abstractions/
+COPY src/Ticketing.Messaging.ServiceBus/Ticketing.Messaging.ServiceBus.csproj Ticketing.Messaging.ServiceBus/
+RUN dotnet restore ${AGENT_PROJECT}/${AGENT_PROJECT}.csproj
+
+# Copy source and publish
+COPY src/${AGENT_PROJECT}/ ${AGENT_PROJECT}/
+COPY src/Ticketing.ServiceDefaults/ Ticketing.ServiceDefaults/
+COPY src/Ticketing.Messaging.Abstractions/ Ticketing.Messaging.Abstractions/
+COPY src/Ticketing.Messaging.ServiceBus/ Ticketing.Messaging.ServiceBus/
+RUN dotnet publish ${AGENT_PROJECT}/${AGENT_PROJECT}.csproj -c Release -o /app --no-restore
+
+# Azure Functions isolated worker runtime
+# If .NET 10 is still in preview, you may need tag: 4-dotnet-isolated10.0-preview
+FROM mcr.microsoft.com/azure-functions/dotnet-isolated:4-dotnet-isolated10.0 AS runtime
+COPY --from=build /app /home/site/wwwroot
+ENV AzureWebJobsScriptRoot=/home/site/wwwroot
+ENV AZURE_FUNCTIONS_ENVIRONMENT=Development

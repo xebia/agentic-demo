@@ -1,0 +1,19 @@
+# Ticketing.Auth — JWT auth service
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
+WORKDIR /src
+
+COPY src/Ticketing.Auth/Ticketing.Auth.csproj Ticketing.Auth/
+COPY src/Ticketing.ServiceDefaults/Ticketing.ServiceDefaults.csproj Ticketing.ServiceDefaults/
+RUN dotnet restore Ticketing.Auth/Ticketing.Auth.csproj
+
+COPY src/Ticketing.Auth/ Ticketing.Auth/
+COPY src/Ticketing.ServiceDefaults/ Ticketing.ServiceDefaults/
+RUN dotnet publish Ticketing.Auth/Ticketing.Auth.csproj -c Release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-preview AS runtime
+WORKDIR /app
+COPY --from=build /app .
+ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_ENVIRONMENT=Development
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "Ticketing.Auth.dll"]

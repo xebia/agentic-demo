@@ -1,0 +1,55 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "ticketing-ns",
+        "Topics": [
+          {
+            "Name": "tickets.events",
+            "Properties": {
+              "DefaultMessageTimeToLive": "PT1H",
+              "MaxSizeInMegabytes": 1024
+            },
+            "Subscriptions": [
+              {
+                "Name": "triage-agent-subscription",
+                "Properties": {
+                  "LockDuration": "PT5M",
+                  "MaxDeliveryCount": 10,
+                  "DeadLetteringOnMessageExpiration": true
+                }
+              },
+              {
+                "Name": "purchasing-agent-subscription",
+                "Properties": {
+                  "LockDuration": "PT5M",
+                  "MaxDeliveryCount": 10,
+                  "DeadLetteringOnMessageExpiration": true
+                }
+              },
+              {
+                "Name": "fulfillment-agent-subscription",
+                "Properties": {
+                  "LockDuration": "PT5M",
+                  "MaxDeliveryCount": 10,
+                  "DeadLetteringOnMessageExpiration": true
+                }
+              },
+              {
+                "Name": "operations-agent-subscription",
+                "Properties": {
+                  "LockDuration": "PT5M",
+                  "MaxDeliveryCount": 10,
+                  "DeadLetteringOnMessageExpiration": true
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "Logging": {
+      "Type": "File"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# Ticketing.Web — Blazor Server + REST API + MCP Server
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
+WORKDIR /src
+
+# Copy project files for restore (layer caching)
+COPY src/Ticketing.Web/Ticketing.Web.csproj Ticketing.Web/
+COPY src/Ticketing.Domain/Ticketing.Domain.csproj Ticketing.Domain/
+COPY src/Ticketing.DataAccess/Ticketing.DataAccess.csproj Ticketing.DataAccess/
+COPY src/Ticketing.DataAccess.Abstractions/Ticketing.DataAccess.Abstractions.csproj Ticketing.DataAccess.Abstractions/
+COPY src/Ticketing.Messaging.Abstractions/Ticketing.Messaging.Abstractions.csproj Ticketing.Messaging.Abstractions/
+COPY src/Ticketing.Messaging.ServiceBus/Ticketing.Messaging.ServiceBus.csproj Ticketing.Messaging.ServiceBus/
+COPY src/Ticketing.ServiceDefaults/Ticketing.ServiceDefaults.csproj Ticketing.ServiceDefaults/
+RUN dotnet restore Ticketing.Web/Ticketing.Web.csproj
+
+# Copy source and publish
+COPY src/Ticketing.Web/ Ticketing.Web/
+COPY src/Ticketing.Domain/ Ticketing.Domain/
+COPY src/Ticketing.DataAccess/ Ticketing.DataAccess/
+COPY src/Ticketing.DataAccess.Abstractions/ Ticketing.DataAccess.Abstractions/
+COPY src/Ticketing.Messaging.Abstractions/ Ticketing.Messaging.Abstractions/
+COPY src/Ticketing.Messaging.ServiceBus/ Ticketing.Messaging.ServiceBus/
+COPY src/Ticketing.ServiceDefaults/ Ticketing.ServiceDefaults/
+RUN dotnet publish Ticketing.Web/Ticketing.Web.csproj -c Release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-preview AS runtime
+WORKDIR /app
+COPY --from=build /app .
+ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_ENVIRONMENT=Development
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "Ticketing.Web.dll"]
