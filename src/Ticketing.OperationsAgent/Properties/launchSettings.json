@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Ticketing.OperationsAgent": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7074",
+      "environmentVariables": {
+        "AZURE_FUNCTIONS_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

@@ -1,4 +1,6 @@
+using System.Reflection;
 using Microsoft.Azure.Functions.Worker.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Ticketing.Messaging.ServiceBus;
@@ -6,6 +8,9 @@ using Ticketing.TriageAgent.Functions;
 using Ticketing.TriageAgent.Services;
 
 var builder = FunctionsApplication.CreateBuilder(args);
+
+builder.ConfigureFunctionsWebApplication();
+builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true);
 
 builder.AddServiceDefaults();
 

@@ -21,10 +21,15 @@ public class DlqMonitorService
         "operations-agent-subscription"
     ];
 
+    private readonly bool _isEmulator;
+
     public DlqMonitorService(IConfiguration configuration, ILogger<DlqMonitorService> logger)
     {
         _logger = logger;
         _connectionString = configuration["ServiceBusConnection"];
+        _isEmulator = _connectionString != null &&
+            (_connectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
+             _connectionString.Contains("127.0.0.1"));
     }
 
     public async Task<List<DlqStatus>> CheckDeadLetterQueuesAsync(CancellationToken cancellationToken = default)
@@ -34,6 +39,12 @@ public class DlqMonitorService
         if (string.IsNullOrEmpty(_connectionString))
         {
             _logger.LogWarning("ServiceBusConnection not configured, skipping DLQ check");
+            return results;
+        }
+
+        if (_isEmulator)
+        {
+            _logger.LogDebug("Service Bus emulator detected, skipping DLQ check (admin API not supported)");
             return results;
         }
 

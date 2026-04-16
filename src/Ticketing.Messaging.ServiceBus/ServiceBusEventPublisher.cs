@@ -23,13 +23,13 @@ public class ServiceBusEventPublisher : IEventPublisher, IAsyncDisposable
     };
 
     public ServiceBusEventPublisher(
+        ServiceBusClient client,
         IOptions<ServiceBusOptions> options,
         ILogger<ServiceBusEventPublisher> logger)
     {
         _logger = logger;
-        var config = options.Value;
-        _client = new ServiceBusClient(config.ConnectionString);
-        _sender = _client.CreateSender(config.TopicName);
+        _client = client;
+        _sender = _client.CreateSender(options.Value.TopicName);
     }
 
     public async Task PublishAsync(TicketEvent ticketEvent, CancellationToken cancellationToken = default)
@@ -66,7 +66,7 @@ public class ServiceBusEventPublisher : IEventPublisher, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _sender.DisposeAsync();
-        await _client.DisposeAsync();
+        // Client is shared via DI — not owned by this instance
         GC.SuppressFinalize(this);
     }
 }
