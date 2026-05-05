@@ -6,22 +6,28 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Ticketing.Messaging.Abstractions;
 using Ticketing.Messaging.Abstractions.Diagnostics;
-using Ticketing.PurchasingAgent.Models;
 using Ticketing.PurchasingAgent.Services;
 using Ticketing.PurchasingAgent.Workflow;
 
 namespace Ticketing.PurchasingAgent.Functions;
 
 /// <summary>
-/// Service Bus trigger that handles purchasing workflow events:
-/// - ticket.assigned (queue=Purchasing): runs the MAF purchasing workflow
-/// - ticket.approved: transitions an already-approved ticket to fulfillment
-///   (kept for backward compatibility until Stage 2 introduces resume)
+/// Single Service Bus trigger that drives the MAF purchasing workflow:
+/// - ticket.assigned (queue=Purchasing): runs the workflow from start. If it
+///   suspends at the human-approval RequestPort, the runtime checkpoints the
+///   state to blob storage (via BlobWorkflowCheckpointStore) and the function
+///   exits cleanly.
+/// - ticket.approved / ticket.rejected: rehydrates the workflow from the
+///   latest checkpoint blob and feeds the human's decision into the
+///   suspended RequestPort. Workflow runs to completion; checkpoint blobs are
+///   deleted.
 /// </summary>
 public class PurchasingFunction
 {
     private readonly TicketingApiClient _apiClient;
     private readonly PurchasingWorkflowFactory _workflowFactory;
+    private readonly BlobWorkflowCheckpointStore _checkpointStore;
+    private readonly CheckpointManager _checkpointManager;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<PurchasingFunction> _logger;
 
@@ -33,11 +39,15 @@ public class PurchasingFunction
     public PurchasingFunction(
         TicketingApiClient apiClient,
         PurchasingWorkflowFactory workflowFactory,
+        BlobWorkflowCheckpointStore checkpointStore,
+        CheckpointManager checkpointManager,
         IEventPublisher eventPublisher,
         ILogger<PurchasingFunction> logger)
     {
         _apiClient = apiClient;
         _workflowFactory = workflowFactory;
+        _checkpointStore = checkpointStore;
+        _checkpointManager = checkpointManager;
         _eventPublisher = eventPublisher;
         _logger = logger;
     }
@@ -82,11 +92,23 @@ public class PurchasingFunction
             {
                 case TicketEventTypes.TicketAssigned
                     when string.Equals(ticketEvent.Payload.AssignedQueue, "Purchasing", StringComparison.OrdinalIgnoreCase):
-                    await ProcessPurchaseTicketByIdAsync(ticketEvent.Payload.TicketId, cancellationToken);
+                    await RunWorkflowAsync(ticketEvent.Payload.TicketId, cancellationToken);
                     break;
 
                 case TicketEventTypes.TicketApproved:
-                    await TransitionToFulfillmentAsync(ticketEvent.Payload.TicketId, cancellationToken);
+                    await ResumeWorkflowAsync(
+                        ticketEvent.Payload.TicketId,
+                        approved: true,
+                        approverName: ticketEvent.Payload.ChangedBy,
+                        cancellationToken);
+                    break;
+
+                case TicketEventTypes.TicketRejected:
+                    await ResumeWorkflowAsync(
+                        ticketEvent.Payload.TicketId,
+                        approved: false,
+                        approverName: ticketEvent.Payload.ChangedBy,
+                        cancellationToken);
                     break;
 
                 default:
@@ -126,12 +148,13 @@ public class PurchasingFunction
     }
 
     /// <summary>
-    /// Drives the MAF purchasing workflow for a single ticket. Auto-approve and
-    /// escalation paths run to completion. The human-approval path runs to its
-    /// suspension point at the RequestPort and then exits cleanly — Stage 2
-    /// adds checkpointing and a separate resume function.
+    /// Used by StartupScanFunction to recover any Triaged+Purchasing tickets
+    /// that were missed (e.g., a ticket created while the agent was down).
     /// </summary>
-    internal async Task ProcessPurchaseTicketByIdAsync(string ticketId, CancellationToken cancellationToken)
+    internal Task ProcessPurchaseTicketByIdAsync(string ticketId, CancellationToken cancellationToken)
+        => RunWorkflowAsync(ticketId, cancellationToken);
+
+    private async Task RunWorkflowAsync(string ticketId, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting purchase workflow for ticket {TicketId}", ticketId);
 
@@ -140,6 +163,7 @@ public class PurchasingFunction
         await using var run = await InProcessExecution.RunStreamingAsync(
             workflow,
             new PurchaseStart(ticketId),
+            _checkpointManager,
             sessionId: ticketId,
             cancellationToken: cancellationToken);
 
@@ -150,7 +174,7 @@ public class PurchasingFunction
                 case RequestInfoEvent reqEvt
                     when reqEvt.Request.PortInfo.PortId == WorkflowIds.ApprovalPort:
                     _logger.LogInformation(
-                        "Ticket {TicketId} workflow suspended awaiting human approval — exiting until ticket.approved/rejected fires",
+                        "Ticket {TicketId} workflow suspended awaiting human approval — checkpoint persisted, exiting until ticket.approved/rejected fires",
                         ticketId);
                     return;
                 case ExecutorFailedEvent failedEvt:
@@ -162,13 +186,102 @@ public class PurchasingFunction
             }
         }
 
-        _logger.LogInformation("Purchase workflow for ticket {TicketId} completed", ticketId);
+        // Workflow ran to completion (auto-approve or escalation path) — clean up.
+        _logger.LogInformation("Purchase workflow for ticket {TicketId} completed; deleting any checkpoint state", ticketId);
+        await _checkpointStore.DeleteSessionAsync(ticketId, cancellationToken);
     }
 
+    private async Task ResumeWorkflowAsync(
+        string ticketId,
+        bool approved,
+        string? approverName,
+        CancellationToken cancellationToken)
+    {
+        var checkpoint = await _checkpointStore.TryGetLatestAsync(ticketId, cancellationToken);
+        if (checkpoint is null)
+        {
+            // No suspended workflow. Either the ticket auto-approved (workflow already
+            // ran to completion and cleaned its blobs) or someone PATCHed status
+            // directly. Fall back to the legacy direct transition so direct-API
+            // approvals still flow to fulfillment.
+            if (approved)
+            {
+                _logger.LogInformation(
+                    "No checkpoint for ticket {TicketId} — falling back to direct fulfillment transition",
+                    ticketId);
+                await TransitionToFulfillmentAsync(ticketId, cancellationToken);
+            }
+            else
+            {
+                _logger.LogDebug("No checkpoint for ticket {TicketId} on rejection, nothing to do", ticketId);
+            }
+            return;
+        }
+
+        _logger.LogInformation(
+            "Resuming purchase workflow for ticket {TicketId} from checkpoint {CheckpointId} ({Decision})",
+            ticketId, checkpoint.CheckpointId, approved ? "approved" : "rejected");
+
+        // Resume reason for rejection comes from the ticket's resolution notes,
+        // which the approver UI populates via TicketEdit.Reject(reason).
+        string? reason = null;
+        if (!approved)
+        {
+            var ticket = await _apiClient.GetTicketAsync(ticketId, cancellationToken);
+            const string prefix = "Rejected: ";
+            if (ticket?.ResolutionNotes is { } notes && notes.StartsWith(prefix))
+            {
+                reason = notes[prefix.Length..];
+            }
+        }
+
+        var workflow = _workflowFactory.Build();
+
+        await using var run = await InProcessExecution.ResumeStreamingAsync(
+            workflow,
+            checkpoint,
+            _checkpointManager,
+            cancellationToken);
+
+        var responded = false;
+
+        await foreach (var evt in run.WatchStreamAsync(cancellationToken))
+        {
+            switch (evt)
+            {
+                case RequestInfoEvent reqEvt
+                    when !responded && reqEvt.Request.PortInfo.PortId == WorkflowIds.ApprovalPort:
+                    var response = reqEvt.Request.CreateResponse(
+                        new ApprovalResponse(approved, reason, approverName));
+                    await run.SendResponseAsync(response);
+                    responded = true;
+                    break;
+                case ExecutorFailedEvent failedEvt:
+                    _logger.LogError("Executor {Id} failed during resume: {Reason}", failedEvt.ExecutorId, failedEvt.ToString());
+                    break;
+                case WorkflowErrorEvent errEvt:
+                    _logger.LogError("Workflow error during resume: {Message}", errEvt.ToString());
+                    break;
+            }
+        }
+
+        if (!responded)
+        {
+            _logger.LogWarning(
+                "Workflow for ticket {TicketId} did not re-emit approval RequestInfoEvent on resume — checkpoint may be stale",
+                ticketId);
+        }
+
+        await _checkpointStore.DeleteSessionAsync(ticketId, cancellationToken);
+        _logger.LogInformation("Purchase workflow for ticket {TicketId} resumed and completed", ticketId);
+    }
+
+    /// <summary>
+    /// Fallback path for ticket.approved events that don't have a suspended
+    /// workflow (e.g., direct API patches that bypass the approver UI).
+    /// </summary>
     private async Task TransitionToFulfillmentAsync(string ticketId, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Transitioning ticket {TicketId} to fulfillment", ticketId);
-
         var ticket = await _apiClient.GetTicketAsync(ticketId, cancellationToken);
         if (ticket == null)
         {
@@ -184,7 +297,7 @@ public class PurchasingFunction
             return;
         }
 
-        await _apiClient.UpdateTicketAsync(ticketId, new UpdateTicketRequest
+        await _apiClient.UpdateTicketAsync(ticketId, new Models.UpdateTicketRequest
         {
             Status = "PendingFulfillment",
             AssignedQueue = "Fulfillment"
@@ -203,6 +316,6 @@ public class PurchasingFunction
             }
         }, cancellationToken);
 
-        _logger.LogInformation("Ticket {TicketId} moved to Fulfillment queue", ticketId);
+        _logger.LogInformation("Ticket {TicketId} moved to Fulfillment queue (fallback path)", ticketId);
     }
 }

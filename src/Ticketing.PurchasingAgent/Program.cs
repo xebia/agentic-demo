@@ -1,4 +1,6 @@
 using System.Reflection;
+using Azure.Storage.Blobs;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -44,5 +46,20 @@ builder.Services.AddTransient<ApprovalBridgeExecutor>();
 builder.Services.AddTransient<ApplyApprovalExecutor>();
 builder.Services.AddTransient<EscalateExecutor>();
 builder.Services.AddScoped<PurchasingWorkflowFactory>();
+
+// Workflow checkpoint persistence — suspended workflows survive function restarts
+// by serializing their state to Azure Blob storage (AzureWebJobsStorage).
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var connectionString = config["AzureWebJobsStorage"]
+        ?? throw new InvalidOperationException("AzureWebJobsStorage is not configured");
+    return new BlobServiceClient(connectionString);
+});
+builder.Services.AddSingleton<BlobWorkflowCheckpointStore>();
+builder.Services.AddSingleton<CheckpointManager>(sp =>
+    CheckpointManager.CreateJson(
+        sp.GetRequiredService<BlobWorkflowCheckpointStore>(),
+        customOptions: null));
 
 builder.Build().Run();
