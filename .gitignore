@@ -417,4 +417,4 @@ FodyWeavers.xsd
 *.msm
 *.msp
 nul
-set-triage-secrets.sh
+set-azureopenai-secrets.sh
