@@ -4,8 +4,8 @@
 @using Markdig
 @inject AuthService AuthService
 @inject UserSessionService UserSession
-@inject McpClientService McpClient
 @inject ChatService? ChatService
+@inject NavigationManager Nav
 @rendermode InteractiveServer
 
 <PageTitle>Ticketing Chatbot</PageTitle>
@@ -124,7 +124,7 @@ else
             <span class="text-muted">Quick actions:</span>
             <button class="btn btn-sm btn-outline-secondary" @onclick='() => SendQuickMessage("List my tickets")'>List my tickets</button>
             <button class="btn btn-sm btn-outline-secondary" @onclick='() => SendQuickMessage("Create a ticket for my laptop issue")'>Create ticket</button>
-            <button class="btn btn-sm btn-outline-secondary" @onclick="ListTools">Show available tools</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick='() => Nav.NavigateTo("/tools")'>Show available tools</button>
         </div>
     </div>
 }
@@ -385,7 +385,7 @@ else
                 });
 
                 // Clear chat service history for new conversation
-                ChatService?.ClearHistory();
+                if (ChatService != null) await ChatService.ClearHistoryAsync();
             }
             else
             {
@@ -402,12 +402,12 @@ else
         }
     }
 
-    private void Logout()
+    private async Task Logout()
     {
         UserSession.ClearUser();
         chatMessages.Clear();
         selectedUser = null;
-        ChatService?.ClearHistory();
+        if (ChatService != null) await ChatService.ClearHistoryAsync();
     }
 
     private async Task HandleKeyPress(KeyboardEventArgs e)
@@ -488,48 +488,4 @@ else
         }
     }
 
-    private async Task ListTools()
-    {
-        isProcessing = true;
-        StateHasChanged();
-
-        try
-        {
-            var result = await McpClient.ListToolsAsync();
-            if (result != null)
-            {
-                var json = System.Text.Json.JsonSerializer.Serialize(
-                    result.RootElement,
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-
-                chatMessages.Add(new ChatMessage
-                {
-                    Role = ChatRoles.Tool,
-                    Content = json,
-                    IsToolCall = true,
-                    ToolName = "tools/list"
-                });
-            }
-            else
-            {
-                chatMessages.Add(new ChatMessage
-                {
-                    Role = ChatRoles.Assistant,
-                    Content = "Failed to list tools. Make sure the ticketing service is running."
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            chatMessages.Add(new ChatMessage
-            {
-                Role = ChatRoles.Assistant,
-                Content = $"Error listing tools: {ex.Message}"
-            });
-        }
-        finally
-        {
-            isProcessing = false;
-        }
-    }
 }

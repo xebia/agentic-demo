@@ -1,35 +1,35 @@
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+using OpenAI.Chat;
+using Ticketing.Chatbot.Models;
 
 namespace Ticketing.Chatbot.Services;
 
-/// <summary>
-/// Represents information about a tool that was called during chat processing.
-/// </summary>
 public record ToolCallInfo(string ToolName, string Arguments, string Result);
 
-/// <summary>
-/// Represents the result of a chat message, including any tool calls that were made.
-/// </summary>
 public record ChatResult(string Response, IReadOnlyList<ToolCallInfo> ToolCalls);
 
 /// <summary>
-/// Service for managing chat conversations with Azure OpenAI.
-/// Maintains conversation history and handles message sending/receiving.
-/// Supports automatic function/tool calling via MCP tools.
+/// Per-circuit Microsoft Agent Framework concierge: owns an MCP client (lazily
+/// initialized after the user authenticates), an AIAgent backed by Azure OpenAI
+/// with the MCP tools registered, and an AgentSession that carries conversation
+/// state across turns.
 /// </summary>
-public class ChatService
+public class ChatService : IAsyncDisposable
 {
-    private readonly IChatClient _chatClient;
-    private readonly McpToolProvider _toolProvider;
+    private readonly ChatClient _chatClient;
+    private readonly UserSessionService _userSession;
+    private readonly ChatSettings _settings;
     private readonly ILogger<ChatService> _logger;
-    private readonly List<ChatMessage> _conversationHistory = [];
-    private IList<AIFunction>? _tools;
+    private readonly ILoggerFactory _loggerFactory;
 
     private const string SystemPrompt = """
         You are a helpful ticketing system assistant. You help users:
         - Create and manage support tickets
-        - Check ticket status  
+        - Check ticket status
         - Get help with common issues
         - Escalate to human support when needed
 
@@ -41,166 +41,178 @@ public class ChatService
         in a user-friendly way.
         """;
 
-    public ChatService(IChatClient chatClient, McpToolProvider toolProvider, ILogger<ChatService> logger)
+    private HttpClient? _mcpHttpClient;
+    private McpClient? _mcpClient;
+    private AIAgent? _agent;
+    private AgentSession? _session;
+    private IList<McpClientTool>? _tools;
+
+    public ChatService(
+        ChatClient chatClient,
+        UserSessionService userSession,
+        IOptions<ChatSettings> settings,
+        ILogger<ChatService> logger,
+        ILoggerFactory loggerFactory)
     {
         _chatClient = chatClient;
-        _toolProvider = toolProvider;
+        _userSession = userSession;
+        _settings = settings.Value;
         _logger = logger;
-        // Initialize with system prompt
-        _conversationHistory.Add(new ChatMessage(ChatRole.System, SystemPrompt));
-        _logger.LogInformation("ChatService initialized with system prompt and tool support");
+        _loggerFactory = loggerFactory;
     }
 
     /// <summary>
-    /// Initializes the tools from MCP. Should be called after user authentication.
+    /// Sends a user message through the agent and returns the response plus any
+    /// tool calls that occurred during the turn.
     /// </summary>
-    public async Task InitializeToolsAsync()
-    {
-        try
-        {
-            _tools = await _toolProvider.GetToolsAsync();
-            _logger.LogInformation("Initialized {ToolCount} tools for chat", _tools.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to initialize tools, continuing without tools");
-            _tools = [];
-        }
-    }
-
-    /// <summary>
-    /// Sends a message to the chat and gets a response.
-    /// Automatically invokes tools when the AI requests them.
-    /// </summary>
-    public async Task<ChatResult> SendMessageAsync(string userMessage)
+    public async Task<ChatResult> SendMessageAsync(string userMessage, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userMessage))
         {
-            _logger.LogWarning("SendMessageAsync called with empty message");
             throw new ArgumentException("Message cannot be empty", nameof(userMessage));
         }
 
-        _logger.LogInformation("Sending message to chat service: {MessageLength} chars", userMessage.Length);
+        await EnsureAgentAsync(cancellationToken);
 
-        // Add user message to history
-        _conversationHistory.Add(new ChatMessage(ChatRole.User, userMessage));
+        _logger.LogInformation("Running agent for {Length}-char user message", userMessage.Length);
 
-        var toolCalls = new List<ToolCallInfo>();
+        AgentResponse response = await _agent!.RunAsync(userMessage, _session!, cancellationToken: cancellationToken);
 
-        try
-        {
-            // Initialize tools if not already done
-            if (_tools == null)
-            {
-                await InitializeToolsAsync();
-            }
+        var toolCalls = ExtractToolCalls(response);
+        var text = response.Text ?? "I apologize, but I couldn't generate a response.";
 
-            // Configure chat options with tools and auto-invocation
-            var options = new ChatOptions();
-
-            if (_tools?.Count > 0)
-            {
-                _logger.LogDebug("Adding {ToolCount} tools to chat options", _tools.Count);
-                foreach (var tool in _tools)
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(tool);
-                }
-                options.ToolMode = ChatToolMode.Auto;
-            }
-
-            _logger.LogDebug("Calling IChatClient.GetResponseAsync with {MessageCount} messages", _conversationHistory.Count);
-
-            // Get response - the FunctionInvokingChatClient will handle tool calls automatically
-            var response = await _chatClient.GetResponseAsync(_conversationHistory, options);
-
-            _logger.LogDebug("Received response from chat service");
-
-            // Check for tool calls in the response messages
-            foreach (var msg in response.Messages)
-            {
-                foreach (var content in msg.Contents)
-                {
-                    if (content is FunctionCallContent functionCall)
-                    {
-                        _logger.LogInformation("Tool called: {ToolName}", functionCall.Name);
-                        var argsJson = functionCall.Arguments != null 
-                            ? System.Text.Json.JsonSerializer.Serialize(functionCall.Arguments)
-                            : "{}";
-                        toolCalls.Add(new ToolCallInfo(functionCall.Name, argsJson, ""));
-                    }
-                    else if (content is FunctionResultContent functionResult)
-                    {
-                        _logger.LogInformation("Tool result received for call {CallId}", functionResult.CallId);
-
-                        string resultStr;
-                        if (functionResult.Exception != null)
-                        {
-                            _logger.LogError(functionResult.Exception, 
-                                "Tool execution failed with exception for call {CallId}", functionResult.CallId);
-                            resultStr = $"Error: {functionResult.Exception.Message}";
-                        }
-                        else
-                        {
-                            resultStr = functionResult.Result?.ToString() ?? "";
-                        }
-
-                        // Update the corresponding tool call with the result
-                        if (toolCalls.Count > 0)
-                        {
-                            var lastCall = toolCalls[^1];
-                            toolCalls[^1] = lastCall with { Result = resultStr };
-                        }
-                    }
-                }
-            }
-
-            // Extract text from response
-            var assistantMessage = response.Text ?? "I apologize, but I couldn't generate a response.";
-
-            _logger.LogInformation("Chat response received: {ResponseLength} chars, {ToolCallCount} tool calls", 
-                assistantMessage.Length, toolCalls.Count);
-
-            // Add response messages to history (includes tool interactions)
-            foreach (var msg in response.Messages)
-            {
-                _conversationHistory.Add(msg);
-            }
-
-            return new ChatResult(assistantMessage, toolCalls);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get response from chat service. Exception type: {ExceptionType}, Message: {ExceptionMessage}", 
-                ex.GetType().FullName, ex.Message);
-
-            // Log inner exception if present
-            if (ex.InnerException != null)
-            {
-                _logger.LogError("Inner exception: {InnerExceptionType}, Message: {InnerExceptionMessage}", 
-                    ex.InnerException.GetType().FullName, ex.InnerException.Message);
-            }
-
-            // Remove the user message if we couldn't get a response
-            _conversationHistory.RemoveAt(_conversationHistory.Count - 1);
-            throw new InvalidOperationException("Failed to get response from chat service", ex);
-        }
+        _logger.LogInformation("Agent returned {Length} chars, {ToolCount} tool calls", text.Length, toolCalls.Count);
+        return new ChatResult(text, toolCalls);
     }
 
     /// <summary>
-    /// Clears the conversation history (keeps system prompt).
+    /// Lists tools advertised by the MCP server using the current user's auth.
     /// </summary>
-    public void ClearHistory()
+    public async Task<IList<McpClientTool>> ListToolsAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Clearing conversation history");
-        _conversationHistory.Clear();
-        _conversationHistory.Add(new ChatMessage(ChatRole.System, SystemPrompt));
-        _tools = null; // Force re-initialization of tools
-        _toolProvider.ClearCache();
+        await EnsureMcpClientAsync(cancellationToken);
+        return _tools ?? [];
     }
 
     /// <summary>
-    /// Gets the current conversation history.
+    /// Invokes an MCP tool directly (used by the Tools explorer page).
     /// </summary>
-    public IReadOnlyList<ChatMessage> GetHistory() => _conversationHistory.AsReadOnly();
+    public async Task<string> CallToolAsync(
+        string toolName,
+        IReadOnlyDictionary<string, object?>? arguments,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureMcpClientAsync(cancellationToken);
+
+        var result = await _mcpClient!.CallToolAsync(
+            toolName,
+            arguments ?? new Dictionary<string, object?>(),
+            cancellationToken: cancellationToken);
+
+        var blocks = result.Content.OfType<TextContentBlock>().Select(t => t.Text);
+        return string.Join("\n", blocks);
+    }
+
+    /// <summary>
+    /// Drops conversation state and forces re-init on next use (e.g., user switch).
+    /// </summary>
+    public async Task ClearHistoryAsync()
+    {
+        _logger.LogInformation("Clearing conversation history and resetting agent");
+        _session = null;
+        _agent = null;
+        _tools = null;
+        if (_mcpClient != null)
+        {
+            await _mcpClient.DisposeAsync();
+            _mcpClient = null;
+        }
+        _mcpHttpClient?.Dispose();
+        _mcpHttpClient = null;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await ClearHistoryAsync();
+        GC.SuppressFinalize(this);
+    }
+
+    private async Task EnsureAgentAsync(CancellationToken cancellationToken)
+    {
+        await EnsureMcpClientAsync(cancellationToken);
+
+        if (_agent == null)
+        {
+            _logger.LogInformation("Building AIAgent with {ToolCount} MCP tools", _tools!.Count);
+            _agent = _chatClient.AsAIAgent(
+                instructions: SystemPrompt,
+                tools: [.. _tools!.Cast<AITool>()]);
+        }
+
+        _session ??= await _agent.CreateSessionAsync(cancellationToken: cancellationToken);
+    }
+
+    private async Task EnsureMcpClientAsync(CancellationToken cancellationToken)
+    {
+        if (!_userSession.IsAuthenticated)
+        {
+            throw new InvalidOperationException("User is not authenticated; cannot connect to MCP server.");
+        }
+
+        if (_mcpClient != null)
+        {
+            return;
+        }
+
+        _logger.LogInformation("Connecting MCP client to {Url}", _settings.McpEndpointUrl);
+
+        _mcpHttpClient = new HttpClient(new BearerTokenHandler(_userSession)
+        {
+            InnerHandler = new HttpClientHandler()
+        });
+
+        var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri(_settings.McpEndpointUrl),
+                Name = "Ticketing"
+            },
+            _mcpHttpClient,
+            _loggerFactory);
+
+        _mcpClient = await McpClient.CreateAsync(transport, loggerFactory: _loggerFactory, cancellationToken: cancellationToken);
+
+        _tools = await _mcpClient.ListToolsAsync(cancellationToken: cancellationToken);
+        _logger.LogInformation("Loaded {Count} MCP tools", _tools.Count);
+    }
+
+    private static List<ToolCallInfo> ExtractToolCalls(AgentResponse response)
+    {
+        var calls = new Dictionary<string, ToolCallInfo>(StringComparer.Ordinal);
+        var order = new List<string>();
+
+        foreach (var msg in response.Messages)
+        {
+            foreach (var content in msg.Contents)
+            {
+                if (content is FunctionCallContent fc)
+                {
+                    var args = fc.Arguments != null
+                        ? System.Text.Json.JsonSerializer.Serialize(fc.Arguments)
+                        : "{}";
+                    calls[fc.CallId] = new ToolCallInfo(fc.Name, args, "");
+                    order.Add(fc.CallId);
+                }
+                else if (content is FunctionResultContent fr && calls.TryGetValue(fr.CallId, out var existing))
+                {
+                    var resultStr = fr.Exception != null
+                        ? $"Error: {fr.Exception.Message}"
+                        : fr.Result?.ToString() ?? "";
+                    calls[fr.CallId] = existing with { Result = resultStr };
+                }
+            }
+        }
+
+        return order.Select(id => calls[id]).ToList();
+    }
 }

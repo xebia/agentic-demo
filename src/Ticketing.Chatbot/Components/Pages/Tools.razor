@@ -3,7 +3,7 @@
 @using Ticketing.Chatbot.Services
 @using System.Text.Json
 @inject UserSessionService UserSession
-@inject McpClientService McpClient
+@inject ChatService? ChatService
 @rendermode InteractiveServer
 
 <PageTitle>MCP Tools</PageTitle>
@@ -109,26 +109,21 @@ else
 
         try
         {
-            var result = await McpClient.ListToolsAsync();
-            if (result != null)
+            if (ChatService == null)
             {
-                tools.Clear();
+                errorMessage = "Chat service is not configured.";
+                return;
+            }
 
-                // Parse the tools from the response
-                if (result.RootElement.TryGetProperty("result", out var resultProp) &&
-                    resultProp.TryGetProperty("tools", out var toolsArray))
+            var mcpTools = await ChatService.ListToolsAsync();
+            tools.Clear();
+            foreach (var tool in mcpTools)
+            {
+                tools.Add(new ToolInfo
                 {
-                    foreach (var tool in toolsArray.EnumerateArray())
-                    {
-                        tools.Add(new ToolInfo
-                        {
-                            Name = tool.GetProperty("name").GetString() ?? "",
-                            Description = tool.TryGetProperty("description", out var desc)
-                                ? desc.GetString() ?? ""
-                                : ""
-                        });
-                    }
-                }
+                    Name = tool.Name,
+                    Description = tool.Description ?? ""
+                });
             }
         }
         catch (Exception ex)
@@ -150,7 +145,7 @@ else
 
     private async Task CallTool()
     {
-        if (string.IsNullOrEmpty(selectedTool)) return;
+        if (string.IsNullOrEmpty(selectedTool) || ChatService == null) return;
 
         isLoading = true;
         errorMessage = null;
@@ -159,23 +154,13 @@ else
 
         try
         {
-            Dictionary<string, object>? args = null;
+            Dictionary<string, object?>? args = null;
             if (!string.IsNullOrWhiteSpace(toolArguments) && toolArguments != "{}")
             {
-                args = JsonSerializer.Deserialize<Dictionary<string, object>>(toolArguments);
+                args = JsonSerializer.Deserialize<Dictionary<string, object?>>(toolArguments);
             }
 
-            var result = await McpClient.CallToolAsync(selectedTool, args);
-            if (result != null)
-            {
-                lastResult = JsonSerializer.Serialize(
-                    result.RootElement,
-                    new JsonSerializerOptions { WriteIndented = true });
-            }
-            else
-            {
-                errorMessage = "Tool call returned no result.";
-            }
+            lastResult = await ChatService.CallToolAsync(selectedTool, args);
         }
         catch (JsonException)
         {
