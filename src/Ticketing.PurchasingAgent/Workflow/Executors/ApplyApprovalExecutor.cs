@@ -100,5 +100,6 @@ public sealed class ApplyApprovalExecutor : Executor<ApprovalResolved>
         }
 
         await context.YieldOutputAsync(ctx.TicketId, cancellationToken);
+        await context.RequestHaltAsync();
     }
 }

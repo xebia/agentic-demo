@@ -38,5 +38,6 @@ public sealed class EscalateExecutor : Executor<EscalateRequest>
 
         _logger.LogInformation("Ticket {TicketId} escalated to Helpdesk for human review", message.TicketId);
         await context.YieldOutputAsync(message.TicketId, cancellationToken);
+        await context.RequestHaltAsync();
     }
 }
