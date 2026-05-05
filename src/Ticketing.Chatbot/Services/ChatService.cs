@@ -166,7 +166,9 @@ public class ChatService : IAsyncDisposable
 
         _logger.LogInformation("Connecting MCP client to {Url}", _settings.McpEndpointUrl);
 
-        _mcpHttpClient = new HttpClient(new BearerTokenHandler(_userSession)
+        _mcpHttpClient = new HttpClient(new BearerTokenHandler(
+            _userSession,
+            _loggerFactory.CreateLogger<BearerTokenHandler>())
         {
             InnerHandler = new HttpClientHandler()
         });
