@@ -1,6 +1,8 @@
 @page "/approvals/pending"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = UserRoles.Approver)]
+@using System.Text.RegularExpressions
+@using Ticketing.Messaging.Abstractions
 
 <PageTitle>Pending Approvals</PageTitle>
 
@@ -19,7 +21,7 @@
         </div>
     </div>
 }
-else if (_tickets == null || _tickets.Count == 0)
+else if (_cards == null || _cards.Count == 0)
 {
     <div class="alert alert-success">
         <i class="bi bi-check-circle"></i> No pending approvals! All caught up!
@@ -28,38 +30,60 @@ else if (_tickets == null || _tickets.Count == 0)
 else
 {
     <div class="mb-3 text-muted">
-        @_tickets.Count approval(s) pending
+        @_cards.Count approval(s) pending
     </div>
 
-    @foreach (var ticket in _tickets)
+    @foreach (var card in _cards)
     {
         <div class="card mb-3">
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-8">
                         <h5 class="card-title">
-                            <a href="@($"tickets/{ticket.TicketId}")" class="text-decoration-none">
-                                @ticket.TicketId - @ticket.Title
+                            <a href="@($"tickets/{card.Ticket.TicketId}")" class="text-decoration-none">
+                                @card.Ticket.TicketId - @card.Ticket.Title
                             </a>
                         </h5>
-                        <p class="card-text text-muted">
-                            <i class="bi bi-person"></i> Requested by: @ticket.RequestorDisplayName<br />
-                            @if (ticket.Category.HasValue)
+                        <p class="card-text text-muted mb-2">
+                            <i class="bi bi-person"></i> Requested by: @card.Ticket.RequestorDisplayName<br />
+                            @if (card.Ticket.Category.HasValue)
                             {
-                                <i class="bi bi-tag"></i> <span>Category: @ticket.Category</span><br />
+                                <i class="bi bi-tag"></i> <span>Category: @card.Ticket.Category</span><br />
                             }
-                            <i class="bi bi-clock"></i> Submitted: @ticket.TimeSinceCreation
+                            <i class="bi bi-clock"></i> Submitted: @card.Ticket.TimeSinceCreation
                         </p>
+
+                        @if (card.Total is not null)
+                        {
+                            <div class="mb-2">
+                                <span class="badge bg-primary fs-6">Total: $@card.Total.Value.ToString("N2")</span>
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(card.Reasoning))
+                        {
+                            <div class="alert alert-info py-2 px-3 mb-2 small">
+                                <strong>AI analysis:</strong> @card.Reasoning
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(card.Analysis))
+                        {
+                            <details class="small">
+                                <summary class="text-muted">Quote details and full analysis</summary>
+                                <pre class="bg-light p-2 mt-2 small" style="white-space: pre-wrap;">@card.Analysis</pre>
+                            </details>
+                        }
                     </div>
                     <div class="col-md-4 text-end">
                         <div class="d-flex flex-column gap-2">
-                            <button class="btn btn-success" @onclick="() => ShowApproveConfirm(ticket)">
+                            <button class="btn btn-success" @onclick="() => ShowApproveConfirm(card.Ticket)">
                                 <i class="bi bi-check-lg"></i> Approve
                             </button>
-                            <button class="btn btn-danger" @onclick="() => ShowRejectModal(ticket)">
+                            <button class="btn btn-danger" @onclick="() => ShowRejectModal(card.Ticket)">
                                 <i class="bi bi-x-lg"></i> Reject
                             </button>
-                            <a href="@($"tickets/{ticket.TicketId}")" class="btn btn-outline-secondary">
+                            <a href="@($"tickets/{card.Ticket.TicketId}")" class="btn btn-outline-secondary">
                                 <i class="bi bi-eye"></i> View Details
                             </a>
                         </div>
@@ -98,7 +122,15 @@ else
     [Inject]
     private MockAuthenticationStateProvider _authProvider { get; set; } = null!;
 
-    private TicketList? _tickets;
+    [Inject]
+    private IEventPublisher _eventPublisher { get; set; } = null!;
+
+    [Inject]
+    private ILogger<PendingApprovals> _logger { get; set; } = null!;
+
+    private record ApprovalCard(TicketInfo Ticket, decimal? Total, string? Reasoning, string? Analysis);
+
+    private List<ApprovalCard>? _cards;
     private bool _isLoading = true;
     private ConfirmModal? _approveModal;
     private ConfirmModal? _rejectModal;
@@ -115,16 +147,67 @@ else
         try
         {
             var criteria = TicketListCriteria.PendingApproval();
-            _tickets = await _ticketListPortal.FetchAsync(criteria);
+            var tickets = await _ticketListPortal.FetchAsync(criteria);
+
+            // Pull the full TicketEdit for each so we can surface AI reasoning and quote total
+            // from TriageNotes — TicketInfo is intentionally lightweight and doesn't carry it.
+            var detailFetches = tickets.Select(async t =>
+            {
+                try
+                {
+                    var edit = await _ticketEditPortal.FetchAsync(t.TicketId);
+                    var (total, reasoning, analysis) = ParseAnalysis(edit.TriageNotes);
+                    return new ApprovalCard(t, total, reasoning, analysis);
+                }
+                catch
+                {
+                    return new ApprovalCard(t, null, null, null);
+                }
+            });
+            _cards = (await Task.WhenAll(detailFetches)).ToList();
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error loading tickets: {ex.Message}");
+            _logger.LogError(ex, "Error loading pending approvals");
         }
         finally
         {
             _isLoading = false;
         }
+    }
+
+    private static readonly Regex TotalRegex = new(@"^Total:\s*\$([\d,]+\.\d{2})", RegexOptions.Multiline);
+
+    private static (decimal? Total, string? Reasoning, string? Analysis) ParseAnalysis(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes)) return (null, null, null);
+
+        // Pull the most recent "--- Purchasing Analysis ---" block — there can be more than one
+        // if the ticket bounced through fulfillment failures and came back.
+        var marker = "--- Purchasing Analysis ---";
+        var idx = notes.LastIndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0) return (null, null, null);
+
+        var block = notes[(idx + marker.Length)..].TrimStart('\n', '\r', ' ');
+
+        decimal? total = null;
+        var totalMatch = TotalRegex.Match(block);
+        if (totalMatch.Success && decimal.TryParse(totalMatch.Groups[1].Value.Replace(",", ""), out var parsedTotal))
+        {
+            total = parsedTotal;
+        }
+
+        // Reasoning is the first paragraph before "Quote Details:".
+        string? reasoning = null;
+        var quoteIdx = block.IndexOf("Quote Details:", StringComparison.Ordinal);
+        if (quoteIdx > 0)
+        {
+            var firstPara = block[..quoteIdx].Trim();
+            // Take just the first ~250 chars for the inline summary.
+            reasoning = firstPara.Length > 250 ? firstPara[..250] + "…" : firstPara;
+        }
+
+        return (total, reasoning, block);
     }
 
     private void ShowApproveConfirm(TicketInfo ticket)
@@ -141,37 +224,68 @@ else
 
     private async Task ApproveTicket(string? _)
     {
-        if (_selectedTicket == null)
-            return;
+        if (_selectedTicket == null) return;
+        var ticketId = _selectedTicket.TicketId;
+        var title = _selectedTicket.Title;
 
         try
         {
-            var ticket = await _ticketEditPortal.FetchAsync(_selectedTicket.TicketId);
+            var ticket = await _ticketEditPortal.FetchAsync(ticketId);
             ticket.Approve();
             await _ticketEditPortal.UpdateAsync(ticket);
+
+            await PublishApprovalEventAsync(TicketEventTypes.TicketApproved, ticketId, title, "Approved");
             await RefreshTickets();
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error approving ticket: {ex.Message}");
+            _logger.LogError(ex, "Error approving ticket {TicketId}", ticketId);
         }
     }
 
     private async Task RejectTicket(string? reason)
     {
-        if (_selectedTicket == null || string.IsNullOrEmpty(reason))
-            return;
+        if (_selectedTicket == null || string.IsNullOrEmpty(reason)) return;
+        var ticketId = _selectedTicket.TicketId;
+        var title = _selectedTicket.Title;
 
         try
         {
-            var ticket = await _ticketEditPortal.FetchAsync(_selectedTicket.TicketId);
+            var ticket = await _ticketEditPortal.FetchAsync(ticketId);
             ticket.Reject(reason);
             await _ticketEditPortal.UpdateAsync(ticket);
+
+            await PublishApprovalEventAsync(TicketEventTypes.TicketRejected, ticketId, title, "Rejected");
             await RefreshTickets();
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error rejecting ticket: {ex.Message}");
+            _logger.LogError(ex, "Error rejecting ticket {TicketId}", ticketId);
+        }
+    }
+
+    private async Task PublishApprovalEventAsync(string eventType, string ticketId, string title, string status)
+    {
+        try
+        {
+            await _eventPublisher.PublishAsync(new TicketEvent
+            {
+                EventType = eventType,
+                Payload = new TicketEventPayload
+                {
+                    TicketId = ticketId,
+                    Title = title,
+                    Status = status,
+                    AssignedQueue = "Purchasing",
+                    ChangedBy = _authProvider.CurrentUser.DisplayName
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // The status change has already been persisted via CSLA; surface the publish
+            // failure but don't roll back the user-visible action.
+            _logger.LogError(ex, "Failed to publish {EventType} for ticket {TicketId}", eventType, ticketId);
         }
     }
 }
@@ -180,7 +294,7 @@ else
     .spin {
         animation: spin 1s linear infinite;
     }
-    
+
     @@keyframes spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
