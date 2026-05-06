@@ -9,6 +9,8 @@ namespace Ticketing.PurchasingAgent.Workflow.Executors;
 /// Workflow entry point. Fetches the ticket, applies idempotency and loop-protection
 /// guards, and routes to the analysis path, an escalation, or a clean skip.
 /// </summary>
+[SendsMessage(typeof(PurchaseContext))]
+[SendsMessage(typeof(EscalateRequest))]
 public sealed class FetchTicketExecutor : Executor<PurchaseStart>
 {
     private readonly TicketingApiClient _apiClient;
@@ -32,7 +34,6 @@ public sealed class FetchTicketExecutor : Executor<PurchaseStart>
         if (ticket == null)
         {
             _logger.LogWarning("Ticket {TicketId} not found, skipping", message.TicketId);
-            await context.YieldOutputAsync(new SkipResult(message.TicketId, "Ticket not found"), cancellationToken);
             await context.RequestHaltAsync();
             return;
         }
@@ -42,9 +43,6 @@ public sealed class FetchTicketExecutor : Executor<PurchaseStart>
             _logger.LogInformation(
                 "Ticket {TicketId} is in status {Status} (not Triaged), skipping",
                 message.TicketId, ticket.Status);
-            await context.YieldOutputAsync(
-                new SkipResult(message.TicketId, $"Status is {ticket.Status}, not Triaged"),
-                cancellationToken);
             await context.RequestHaltAsync();
             return;
         }

@@ -47,7 +47,6 @@ public sealed class PurchasingWorkflowFactory
             .AddEdge<ApprovalResolved>(decide, apply, m => m is not null)
             .AddEdge(ApprovalPort, bridge)
             .AddEdge<ApprovalResolved>(bridge, apply, m => m is not null)
-            .WithOutputFrom(apply, escalate, fetch)
             .Build();
     }
 }

@@ -9,6 +9,8 @@ namespace Ticketing.PurchasingAgent.Workflow.Executors;
 /// Gets a quote from the FulfillmentAgent for the analyzed items. Escalates if
 /// any item is unavailable in the vendor catalog.
 /// </summary>
+[SendsMessage(typeof(PurchaseContext))]
+[SendsMessage(typeof(EscalateRequest))]
 public sealed class GetQuoteExecutor : Executor<PurchaseContext>
 {
     private readonly FulfillmentApiClient _fulfillmentClient;

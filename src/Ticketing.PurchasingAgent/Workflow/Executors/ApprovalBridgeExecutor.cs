@@ -8,6 +8,7 @@ namespace Ticketing.PurchasingAgent.Workflow.Executors;
 /// suspension), and produces the unified ApprovalResolved message that
 /// ApplyApprovalExecutor consumes.
 /// </summary>
+[SendsMessage(typeof(ApprovalResolved))]
 public sealed class ApprovalBridgeExecutor : Executor<ApprovalResponse>
 {
     public ApprovalBridgeExecutor() : base("purchasing.approval-bridge")

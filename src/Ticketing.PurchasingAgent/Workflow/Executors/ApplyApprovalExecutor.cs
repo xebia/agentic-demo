@@ -99,7 +99,6 @@ public sealed class ApplyApprovalExecutor : Executor<ApprovalResolved>
             _logger.LogInformation("Ticket {TicketId} rejected: {Reason}", ctx.TicketId, message.Reason);
         }
 
-        await context.YieldOutputAsync(ctx.TicketId, cancellationToken);
         await context.RequestHaltAsync();
     }
 }

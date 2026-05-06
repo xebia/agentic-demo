@@ -5,6 +5,7 @@ using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Ticketing.Messaging.ServiceBus;
 using Ticketing.PurchasingAgent.Functions;
 using Ticketing.PurchasingAgent.Services;
@@ -17,6 +18,14 @@ builder.ConfigureFunctionsWebApplication();
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true);
 
 builder.AddServiceDefaults();
+
+// Optional file log path — set PURCHASING_AGENT_LOG_FILE to tail workflow activity
+// without going through the Aspire dashboard.
+var logFile = builder.Configuration["PURCHASING_AGENT_LOG_FILE"];
+if (!string.IsNullOrWhiteSpace(logFile))
+{
+    builder.Logging.AddProvider(new SimpleFileLoggerProvider(logFile));
+}
 
 // Register auth token provider (singleton — manages its own token cache)
 builder.Services.AddSingleton<AuthTokenProvider>();

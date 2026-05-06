@@ -11,6 +11,8 @@ namespace Ticketing.PurchasingAgent.Workflow.Executors;
 /// - auto-approve: ticket total ≤ $500 AND LLM recommended auto-approve → emits ApprovalResolved directly
 /// - human approval: anything else → stashes context in shared state and emits ApprovalRequest to the RequestPort (suspends)
 /// </summary>
+[SendsMessage(typeof(ApprovalRequest))]
+[SendsMessage(typeof(ApprovalResolved))]
 public sealed class DecideExecutor : Executor<PurchaseContext>
 {
     public const string ContextStateScope = "purchasing.context";

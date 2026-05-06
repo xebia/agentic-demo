@@ -50,11 +50,6 @@ public record ApprovalResolved(
 public record EscalateRequest(string TicketId, string Notes);
 
 /// <summary>
-/// Idempotency / status guard fell through — workflow should halt cleanly without acting.
-/// </summary>
-public record SkipResult(string TicketId, string Reason);
-
-/// <summary>
 /// Constants used to identify ports and label edges for visualization.
 /// </summary>
 public static class WorkflowIds
